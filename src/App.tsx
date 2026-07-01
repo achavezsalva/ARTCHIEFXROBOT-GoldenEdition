@@ -65,6 +65,37 @@ export default function App() {
   const [testEndMonth, setTestEndMonth] = useState<number>(12);
   const [testEndYear, setTestEndYear] = useState<number>(2026);
   const [hasInitializedPeriod, setHasInitializedPeriod] = useState<boolean>(false);
+  
+  // Chart Zoom Level / Visible Candles Count (Default: 50, limits: 10 to 180)
+  const [visibleCandlesCount, setVisibleCandlesCount] = useState<number>(50);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Bind the wheel event directly using an effect so we can call preventDefault() 
+  // without browser blocking due to passive event listener defaults on touch/scroll.
+  useEffect(() => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // Calculate a zoom step proportional to current zoom level so zooming is smooth
+      const zoomIntensity = 0.08;
+      const step = Math.max(1, Math.round(visibleCandlesCount * zoomIntensity));
+      
+      setVisibleCandlesCount(prev => {
+        // e.deltaY > 0 -> scrolling down (zoom out, show more candles)
+        // e.deltaY < 0 -> scrolling up (zoom in, show fewer candles)
+        const direction = e.deltaY > 0 ? 1 : -1;
+        const target = prev + direction * step;
+        return Math.max(10, Math.min(180, target));
+      });
+    };
+
+    svgEl.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      svgEl.removeEventListener('wheel', handleWheel);
+    };
+  }, [visibleCandlesCount]);
 
   const simTimeRef = useRef<number>(state.candles[state.candles.length - 1]?.time || (Math.floor(Date.now() / 1000) - 3600 * 24));
 
@@ -550,7 +581,7 @@ export default function App() {
   const chartHeight = 520;
   const chartWidth = 750;
   const padding = 45;
-  const candleSubset = candles.slice(-50); // Show last 50 candles
+  const candleSubset = candles.slice(-visibleCandlesCount); // Dynamically slice based on zoom count
 
   const getPriceRange = () => {
     if (candleSubset.length === 0) return { min: 1, max: 2 };
@@ -689,6 +720,9 @@ export default function App() {
                 </span>
                 <span className="text-sm font-semibold tracking-tight text-white font-sans">{activePair} Live Trading Simulation</span>
                 <span className="text-[11px] bg-white/5 border border-white/10 px-2 py-0.5 rounded-full text-slate-400 font-mono">1M Timeframe</span>
+                <span className="text-[11px] bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-amber-500 font-mono hidden md:inline-flex items-center gap-1" title="Gamitin ang mouse wheel (scroll) sa ibabaw ng tsart para mag-zoom">
+                  🔍 Zoom: {visibleCandlesCount} Candles (Scroll to zoom)
+                </span>
                 {candles.length > 0 && (
                   <span className="text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full" id="sim-date-badge">
                     {new Date(candles[candles.length - 1].time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -721,8 +755,9 @@ export default function App() {
               </div>
 
               <svg 
+                ref={svgRef}
                 viewBox={`0 0 ${chartWidth} ${chartHeight}`} 
-                className="w-full h-full relative z-10"
+                className="w-full h-full relative z-10 cursor-crosshair"
                 id="candlestick-svg"
               >
                 {/* Horizontal grid lines */}
@@ -1115,6 +1150,267 @@ export default function App() {
 
           </div>
 
+          {/* FOOTER DETAIL MODULES (POSITIONS, HISTORY, RISKS, COACH) - ALIGNED INSIDE LEFT COLUMN */}
+          <div className="mt-6" id="trade-analysis-dashboard">
+            <div className="bg-[#0F172A]/50 border border-white/10 rounded-xl overflow-hidden shadow-xl">
+              {/* Tabs */}
+              <div className="flex border-b border-white/10 bg-[#0A0E17]/60 p-1">
+                {[
+                  { id: 'positions', label: `Mga Open Positions (${openTrades.length})`, icon: Activity },
+                  { id: 'history', label: `Kasaysayan (${closedTrades.length})`, icon: BookOpen },
+                  { id: 'metrics', label: 'Estatistika ng Robot', icon: BarChart3 },
+                  { id: 'coach', label: 'Artchie AI Risk Coach', icon: Brain },
+                ].map(tab => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id as any)}
+                      className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold font-sans border-b-2 transition-all cursor-pointer ${
+                        activeTab === tab.id
+                          ? 'border-amber-500 text-amber-500 bg-amber-500/[0.02]'
+                          : 'border-transparent text-slate-400 hover:text-slate-300'
+                      }`}
+                      id={`tab-${tab.id}`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Content panel */}
+              <div className="p-5 min-h-[220px]" id="tab-content-panel">
+                <AnimatePresence mode="wait">
+                  
+                  {/* TAB 1: ACTIVE POSITIONS */}
+                  {activeTab === 'positions' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="overflow-x-auto"
+                      key="tab-positions"
+                    >
+                      {openTrades.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 text-slate-500">
+                          <Terminal className="h-8 w-8 mb-2 opacity-50 text-amber-500/60" />
+                          <p className="text-xs font-mono">Walang bukas na transaksyon sa ngayon.</p>
+                          <p className="text-[10px] text-slate-600 mt-1">Naghihintay ng Moving Average crossover o RSI signal...</p>
+                        </div>
+                      ) : (
+                        <table className="w-full text-left text-xs font-mono">
+                          <thead>
+                            <tr className="text-slate-500 border-b border-white/10 pb-2">
+                              <th className="py-2.5">TICKET ID</th>
+                              <th className="py-2.5">SIMBOLO</th>
+                              <th className="py-2.5">URI</th>
+                              <th className="py-2.5">LOTS</th>
+                              <th className="py-2.5">OPEN PRICE</th>
+                              <th className="py-2.5">PROFIT / LOSS</th>
+                              <th className="py-2.5">EA COMMENTS</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 text-slate-300">
+                            {openTrades.map((t) => (
+                               <tr key={t.ticket} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="py-3 text-slate-400">{t.ticket}</td>
+                                <td className="py-3 font-semibold text-white">{t.symbol}</td>
+                                <td className="py-3">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                    {t.type}
+                                  </span>
+                                </td>
+                                <td className="py-3 font-semibold">{t.lots.toFixed(2)}</td>
+                                <td className="py-3">{formatPrice(t.openPrice)}</td>
+                                <td className={`py-3 font-bold ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  $ {t.profit.toFixed(2)}
+                                </td>
+                                <td className="py-3 text-[10px] text-slate-500">{t.comment}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </motion.div>
+                  )}
+
+                  {/* TAB 2: CLOSED TRADES HISTORY */}
+                  {activeTab === 'history' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="space-y-4"
+                      key="tab-history"
+                    >
+                      {closedTrades.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 text-slate-500">
+                          <BookOpen className="h-8 w-8 mb-2 opacity-50 text-amber-500/60" />
+                          <p className="text-xs font-mono">Walang kasaysayan ng mga natapos na trade.</p>
+                          <p className="text-[10px] text-slate-600 mt-1">Kapag nag-close ang grid basket, ang records ay lalabas dito.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-3">
+                            <div>
+                              <h4 className="text-xs font-semibold text-white uppercase tracking-wider font-sans">Lahat ng Closed Trades ({closedTrades.length})</h4>
+                              <p className="text-[10px] text-slate-400 mt-0.5 font-sans">Ipinapakita ang huling 20 closed positions sa ibaba. I-download ang buong report gamit ang button sa kanan.</p>
+                            </div>
+                            <button
+                              onClick={handleExportCSV}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-slate-950 hover:bg-amber-400 text-xs font-bold rounded-lg transition-all shadow-md shadow-amber-500/10 cursor-pointer w-fit shrink-0"
+                              id="export-csv-btn"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Export to CSV (Performance Logs)
+                            </button>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs font-mono">
+                              <thead>
+                                <tr className="text-slate-500 border-b border-white/10 pb-2">
+                                  <th className="py-2.5">TICKET ID</th>
+                                  <th className="py-2.5">SIMBOLO</th>
+                                  <th className="py-2.5">URI</th>
+                                  <th className="py-2.5">LOTS</th>
+                                  <th className="py-2.5">OPEN → CLOSE</th>
+                                  <th className="py-2.5">KITANG NA-SECURE</th>
+                                  <th className="py-2.5">EXIT REASON / COMMENT</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5 text-slate-300">
+                                {closedTrades.slice(-20).reverse().map((t) => (
+                                   <tr key={t.ticket} className="hover:bg-white/[0.02] transition-colors">
+                                    <td className="py-3 text-slate-400">{t.ticket}</td>
+                                    <td className="py-3 text-slate-300">{t.symbol}</td>
+                                    <td className="py-3">
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                        {t.type}
+                                      </span>
+                                    </td>
+                                    <td className="py-3">{t.lots.toFixed(2)}</td>
+                                    <td className="py-3 text-[11px]">
+                                      {formatPrice(t.openPrice)} → {formatPrice(t.closePrice || 0)}
+                                    </td>
+                                    <td className={`py-3 font-bold ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      $ {t.profit.toFixed(2)}
+                                    </td>
+                                    <td className="py-3 text-[10px] text-slate-400">{t.comment}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+
+                  {/* TAB 3: STATISTICS & EA ANALYSIS */}
+                  {activeTab === 'metrics' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono"
+                      key="tab-metrics"
+                    >
+                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
+                        <span className="text-[10px] text-slate-500 block uppercase">Win Rate (Kapanalan)</span>
+                        <span className="text-xl font-bold text-emerald-400 block mt-1">{metrics.winRate.toFixed(1)}%</span>
+                        <span className="text-[10px] text-slate-600 block mt-1">Lahat ng natapos: {metrics.totalTrades}</span>
+                      </div>
+
+                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
+                        <span className="text-[10px] text-slate-500 block uppercase">Profit Factor</span>
+                        <span className="text-xl font-bold text-amber-500 block mt-1">{metrics.profitFactor.toFixed(2)}</span>
+                        <span className="text-[10px] text-slate-600 block mt-1">Gross Profit / Loss</span>
+                      </div>
+
+                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
+                        <span className="text-[10px] text-slate-500 block uppercase">Average Win Size</span>
+                        <span className="text-xl font-bold text-emerald-400 block mt-1">$ {metrics.averageWin.toFixed(2)}</span>
+                        <span className="text-[10px] text-slate-600 block mt-1">Sukat ng kita kada basket TP</span>
+                      </div>
+
+                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
+                        <span className="text-[10px] text-slate-500 block uppercase">Average Loss Size</span>
+                        <span className="text-xl font-bold text-rose-400 block mt-1">$ {metrics.averageLoss.toFixed(2)}</span>
+                        <span className="text-[10px] text-slate-600 block mt-1">Kadalasan ay stop out lamang</span>
+                      </div>
+
+                      {/* PRO TIPS FOR THE GRID BOT */}
+                      <div className="col-span-1 md:col-span-4 bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg flex items-start gap-3">
+                        <CheckCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-300 font-sans">Sikreto ng Golden Grid EA Strategy:</h4>
+                          <p className="text-[11px] text-slate-400 leading-relaxed mt-1 font-sans">
+                            Ang grid averaging ay umaasa sa panaka-nakang pag-bounces ng presyo ng forex (mean reversion). Kung walang trend-changing news, halos 100% ng basket ay magco-close sa Take Profit. Ngunit mag-ingat sa walang-humpay na trend na pwedeng sumagad sa iyong <strong className="text-rose-400">MaxMartingaleSteps (Max Safety)</strong> at humantong sa Stop Out!
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* TAB 4: AI RISK COACH COOPERATING WITH GEMINI */}
+                  {activeTab === 'coach' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="flex flex-col gap-4 font-sans"
+                      key="tab-coach"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#0A0E17] p-4 border border-white/5 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-amber-500/10 rounded-xl shrink-0">
+                            <Brain className="h-5 w-5 text-amber-500" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-white">Artchie AI Coach • Custom Risk Advisory</h4>
+                            <p className="text-xs text-slate-400">Hayaang suriin ng Gemini ang iyong parameter risk, active drawdown, at moving averages.</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleRequestAiAnalysis}
+                          disabled={isAiLoading}
+                          className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs tracking-wider transition-all shadow-md shadow-amber-500/10 disabled:opacity-50 shrink-0 cursor-pointer"
+                          id="ai-analysis-btn"
+                        >
+                          {isAiLoading ? 'Sinusuri ng AI...' : 'Tawagin si AI Coach'}
+                        </button>
+                      </div>
+
+                      {/* AI Response Display */}
+                      <div className="bg-[#0A0E17]/30 border border-white/5 rounded-lg p-5 min-h-[140px] relative font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        {isAiLoading ? (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0A0E17]/95 rounded-lg z-10">
+                            <Activity className="h-8 w-8 text-amber-500 animate-spin mb-2" />
+                            <span className="text-[11px] text-slate-400">Binabasa ang statistics, RSI levels, at basket drawdowns...</span>
+                          </div>
+                        ) : null}
+
+                        {aiAnalysis ? (
+                          <div className="prose prose-invert prose-xs font-sans max-w-none text-slate-300 leading-relaxed" id="ai-response-text">
+                            {aiAnalysis}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-8 text-slate-500 text-center">
+                            <Brain className="h-8 w-8 mb-2 text-slate-600" />
+                            <p className="text-xs font-semibold text-slate-300">Pindutin ang &quot;Tawagin si AI Coach&quot; sa itaas.</p>
+                            <p className="text-[10px] text-slate-600 max-w-sm mt-1">Isusumite ng server ang iyong in-memory trades at settings kay Gemini para sa real-time risk assessment.</p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+
+                </AnimatePresence>
+              </div>
+            </div>
+          </div>
+
         </div>
 
         {/* RIGHT COLUMN: MT4 DASHBOARD FRAME (4 Cols) */}
@@ -1378,266 +1674,7 @@ export default function App() {
 
       </main>
 
-      {/* FOOTER DETAIL MODULES (POSITIONS, HISTORY, RISKS, COACH) */}
-      <section className="max-w-7xl mx-auto px-6 mt-8" id="trade-analysis-dashboard">
-        <div className="bg-[#0F172A]/50 border border-white/10 rounded-xl overflow-hidden shadow-xl">
-          {/* Tabs */}
-          <div className="flex border-b border-white/10 bg-[#0A0E17]/60 p-1">
-            {[
-              { id: 'positions', label: `Mga Open Positions (${openTrades.length})`, icon: Activity },
-              { id: 'history', label: `Kasaysayan (${closedTrades.length})`, icon: BookOpen },
-              { id: 'metrics', label: 'Estatistika ng Robot', icon: BarChart3 },
-              { id: 'coach', label: 'Artchie AI Risk Coach', icon: Brain },
-            ].map(tab => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold font-sans border-b-2 transition-all cursor-pointer ${
-                    activeTab === tab.id
-                      ? 'border-amber-500 text-amber-500 bg-amber-500/[0.02]'
-                      : 'border-transparent text-slate-400 hover:text-slate-300'
-                  }`}
-                  id={`tab-${tab.id}`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
 
-          {/* Content panel */}
-          <div className="p-5 min-h-[220px]" id="tab-content-panel">
-            <AnimatePresence mode="wait">
-              
-              {/* TAB 1: ACTIVE POSITIONS */}
-              {activeTab === 'positions' && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="overflow-x-auto"
-                  key="tab-positions"
-                >
-                  {openTrades.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-slate-500">
-                      <Terminal className="h-8 w-8 mb-2 opacity-50 text-amber-500/60" />
-                      <p className="text-xs font-mono">Walang bukas na transaksyon sa ngayon.</p>
-                      <p className="text-[10px] text-slate-600 mt-1">Naghihintay ng Moving Average crossover o RSI signal...</p>
-                    </div>
-                  ) : (
-                    <table className="w-full text-left text-xs font-mono">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-white/10 pb-2">
-                          <th className="py-2.5">TICKET ID</th>
-                          <th className="py-2.5">SIMBOLO</th>
-                          <th className="py-2.5">URI</th>
-                          <th className="py-2.5">LOTS</th>
-                          <th className="py-2.5">OPEN PRICE</th>
-                          <th className="py-2.5">PROFIT / LOSS</th>
-                          <th className="py-2.5">EA COMMENTS</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5 text-slate-300">
-                        {openTrades.map((t) => (
-                           <tr key={t.ticket} className="hover:bg-white/[0.02] transition-colors">
-                            <td className="py-3 text-slate-400">{t.ticket}</td>
-                            <td className="py-3 font-semibold text-white">{t.symbol}</td>
-                            <td className="py-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                {t.type}
-                              </span>
-                            </td>
-                            <td className="py-3 font-semibold">{t.lots.toFixed(2)}</td>
-                            <td className="py-3">{formatPrice(t.openPrice)}</td>
-                            <td className={`py-3 font-bold ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              $ {t.profit.toFixed(2)}
-                            </td>
-                            <td className="py-3 text-[10px] text-slate-500">{t.comment}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </motion.div>
-              )}
-
-              {/* TAB 2: CLOSED TRADES HISTORY */}
-              {activeTab === 'history' && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="space-y-4"
-                  key="tab-history"
-                >
-                  {closedTrades.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-slate-500">
-                      <BookOpen className="h-8 w-8 mb-2 opacity-50 text-amber-500/60" />
-                      <p className="text-xs font-mono">Walang kasaysayan ng mga natapos na trade.</p>
-                      <p className="text-[10px] text-slate-600 mt-1">Kapag nag-close ang grid basket, ang records ay lalabas dito.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-3">
-                        <div>
-                          <h4 className="text-xs font-semibold text-white uppercase tracking-wider font-sans">Lahat ng Closed Trades ({closedTrades.length})</h4>
-                          <p className="text-[10px] text-slate-400 mt-0.5 font-sans">Ipinapakita ang huling 20 closed positions sa ibaba. I-download ang buong report gamit ang button sa kanan.</p>
-                        </div>
-                        <button
-                          onClick={handleExportCSV}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-slate-950 hover:bg-amber-400 text-xs font-bold rounded-lg transition-all shadow-md shadow-amber-500/10 cursor-pointer w-fit shrink-0"
-                          id="export-csv-btn"
-                        >
-                          <Download className="h-3.5 w-3.5" /> Export to CSV (Performance Logs)
-                        </button>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs font-mono">
-                          <thead>
-                            <tr className="text-slate-500 border-b border-white/10 pb-2">
-                              <th className="py-2.5">TICKET ID</th>
-                              <th className="py-2.5">SIMBOLO</th>
-                              <th className="py-2.5">URI</th>
-                              <th className="py-2.5">LOTS</th>
-                              <th className="py-2.5">OPEN → CLOSE</th>
-                              <th className="py-2.5">KITANG NA-SECURE</th>
-                              <th className="py-2.5">EXIT REASON / COMMENT</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5 text-slate-300">
-                            {closedTrades.slice(-20).reverse().map((t) => (
-                               <tr key={t.ticket} className="hover:bg-white/[0.02] transition-colors">
-                                <td className="py-3 text-slate-400">{t.ticket}</td>
-                                <td className="py-3 text-slate-300">{t.symbol}</td>
-                                <td className="py-3">
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                    {t.type}
-                                  </span>
-                                </td>
-                                <td className="py-3">{t.lots.toFixed(2)}</td>
-                                <td className="py-3 text-[11px]">
-                                  {formatPrice(t.openPrice)} → {formatPrice(t.closePrice || 0)}
-                                </td>
-                                <td className={`py-3 font-bold ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                  $ {t.profit.toFixed(2)}
-                                </td>
-                                <td className="py-3 text-[10px] text-slate-400">{t.comment}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-
-              {/* TAB 3: STATISTICS & EA ANALYSIS */}
-              {activeTab === 'metrics' && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono"
-                  key="tab-metrics"
-                >
-                  <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                    <span className="text-[10px] text-slate-500 block uppercase">Win Rate (Kapanalan)</span>
-                    <span className="text-xl font-bold text-emerald-400 block mt-1">{metrics.winRate.toFixed(1)}%</span>
-                    <span className="text-[10px] text-slate-600 block mt-1">Lahat ng natapos: {metrics.totalTrades}</span>
-                  </div>
-
-                  <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                    <span className="text-[10px] text-slate-500 block uppercase">Profit Factor</span>
-                    <span className="text-xl font-bold text-amber-500 block mt-1">{metrics.profitFactor.toFixed(2)}</span>
-                    <span className="text-[10px] text-slate-600 block mt-1">Gross Profit / Loss</span>
-                  </div>
-
-                  <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                    <span className="text-[10px] text-slate-500 block uppercase">Average Win Size</span>
-                    <span className="text-xl font-bold text-emerald-400 block mt-1">$ {metrics.averageWin.toFixed(2)}</span>
-                    <span className="text-[10px] text-slate-600 block mt-1">Sukat ng kita kada basket TP</span>
-                  </div>
-
-                  <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                    <span className="text-[10px] text-slate-500 block uppercase">Average Loss Size</span>
-                    <span className="text-xl font-bold text-rose-400 block mt-1">$ {metrics.averageLoss.toFixed(2)}</span>
-                    <span className="text-[10px] text-slate-600 block mt-1">Kadalasan ay stop out lamang</span>
-                  </div>
-
-                  {/* PRO TIPS FOR THE GRID BOT */}
-                  <div className="col-span-1 md:col-span-4 bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg flex items-start gap-3">
-                    <CheckCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-300 font-sans">Sikreto ng Golden Grid EA Strategy:</h4>
-                      <p className="text-[11px] text-slate-400 leading-relaxed mt-1 font-sans">
-                        Ang grid averaging ay umaasa sa panaka-nakang pag-bounces ng presyo ng forex (mean reversion). Kung walang trend-changing news, halos 100% ng basket ay magco-close sa Take Profit. Ngunit mag-ingat sa walang-humpay na trend na pwedeng sumagad sa iyong <strong className="text-rose-400">MaxMartingaleSteps (Max Safety)</strong> at humantong sa Stop Out!
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-
-              {/* TAB 4: AI RISK COACH COOPERATING WITH GEMINI */}
-              {activeTab === 'coach' && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="flex flex-col gap-4 font-sans"
-                  key="tab-coach"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#0A0E17] p-4 border border-white/5 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-amber-500/10 rounded-xl shrink-0">
-                        <Brain className="h-5 w-5 text-amber-500" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-semibold text-white">Artchie AI Coach • Custom Risk Advisory</h4>
-                        <p className="text-xs text-slate-400">Hayaang suriin ng Gemini ang iyong parameter risk, active drawdown, at moving averages.</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleRequestAiAnalysis}
-                      disabled={isAiLoading}
-                      className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs tracking-wider transition-all shadow-md shadow-amber-500/10 disabled:opacity-50 shrink-0 cursor-pointer"
-                      id="ai-analysis-btn"
-                    >
-                      {isAiLoading ? 'Sinusuri ng AI...' : 'Tawagin si AI Coach'}
-                    </button>
-                  </div>
-
-                  {/* AI Response Display */}
-                  <div className="bg-[#0A0E17]/30 border border-white/5 rounded-lg p-5 min-h-[140px] relative font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
-                    {isAiLoading ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0A0E17]/95 rounded-lg z-10">
-                        <Activity className="h-8 w-8 text-amber-500 animate-spin mb-2" />
-                        <span className="text-[11px] text-slate-400">Binabasa ang statistics, RSI levels, at basket drawdowns...</span>
-                      </div>
-                    ) : null}
-
-                    {aiAnalysis ? (
-                      <div className="prose prose-invert prose-xs font-sans max-w-none text-slate-300 leading-relaxed" id="ai-response-text">
-                        {aiAnalysis}
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-8 text-slate-500 text-center">
-                        <Brain className="h-8 w-8 mb-2 text-slate-600" />
-                        <p className="text-xs font-semibold text-slate-300">Pindutin ang &quot;Tawagin si AI Coach&quot; sa itaas.</p>
-                        <p className="text-[10px] text-slate-600 max-w-sm mt-1">Isusumite ng server ang iyong in-memory trades at settings kay Gemini para sa real-time risk assessment.</p>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-
-            </AnimatePresence>
-          </div>
-        </div>
-      </section>
 
       {/* PARAMETERS CONFIGURATION DIALOG / MODAL */}
       <AnimatePresence>
