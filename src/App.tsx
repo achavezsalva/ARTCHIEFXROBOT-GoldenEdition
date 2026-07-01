@@ -47,7 +47,7 @@ import { MQL4_ROBOT_SOURCE } from './robot_source';
 
 export default function App() {
   const [state, setState] = useState<SimulatorState>(() => createInitialState());
-  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'metrics' | 'coach'>('positions');
+  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'metrics'>('positions');
   const [manualLots, setManualLots] = useState<number>(0.01);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -708,8 +708,8 @@ export default function App() {
       {/* DASHBOARD GRID */}
       <main className="max-w-7xl mx-auto px-6 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-main">
         
-        {/* LEFT COLUMN: GRAPH & TRADE EXECUTION (8 Cols) */}
-        <div className="lg:col-span-8 flex flex-col gap-6" id="left-column">
+        {/* LEFT COLUMN: GRAPH & TRADE EXECUTION (9 Cols) */}
+        <div className="lg:col-span-9 flex flex-col gap-6" id="left-column">
           
           {/* SIMULATOR CHART */}
           <div className="bg-[#0F172A]/50 border border-white/10 rounded-xl p-4 shadow-xl relative overflow-hidden" id="chart-card">
@@ -956,6 +956,64 @@ export default function App() {
             </div>
           </div>
 
+          {/* SYSTEM CONFIGURATION PANEL (Moved below the chart with red line accent) */}
+          <div className="bg-[#0F172A]/50 border border-white/10 rounded-xl p-5 shadow-xl relative flex flex-col items-center" id="ea-configurator-card">
+            {/* Top Red Accent line in the middle */}
+            <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-32 h-[3px] bg-red-600 rounded-b shadow-[0_0_10px_rgba(220,38,38,0.6)]" />
+            
+            {/* Robot Controls at Setup Text - Middle Top */}
+            <div className="flex items-center gap-2 mb-5 mt-1 shrink-0 justify-center">
+              <Sliders className="h-4 w-4 text-amber-500" />
+              <h3 className="text-xs font-bold uppercase tracking-widest text-amber-500 font-mono">
+                Robot Controls at Setup
+              </h3>
+            </div>
+
+            {/* CONTROLS ROW - Centered */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 w-full">
+              {/* AUTO TRADING EA SWITCH */}
+              <div className="flex items-center gap-4 bg-[#0A0E17]/80 px-4 py-2 border border-white/5 rounded-lg w-full sm:w-auto justify-between sm:justify-start shadow-md">
+                <div>
+                  <span className="text-[11px] font-semibold text-white block">Artchie FXROBOT 3.0 Mode</span>
+                  <span className="text-[9px] text-slate-400 block leading-none mt-1">Auto-trading & Grid</span>
+                </div>
+                <button
+                  onClick={() => handleControl('ea_toggle')}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-all duration-300 cursor-pointer shrink-0 ${
+                    eaEnabled ? 'bg-amber-500' : 'bg-slate-800'
+                  }`}
+                  id="ea-toggle-switch"
+                >
+                  <span
+                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-all duration-300 ${
+                      eaEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* MARKET CONDITION CHANGER */}
+              <div className="flex items-center gap-4 bg-[#0A0E17]/80 px-4 py-2 border border-white/5 rounded-lg w-full sm:w-auto justify-between sm:justify-start shadow-md">
+                <div>
+                  <span className="text-[11px] font-semibold text-white block">Tatakbo sa Kundisyon</span>
+                  <span className="text-[9px] text-slate-400 block leading-none mt-1">Kilos ng simulation market</span>
+                </div>
+                <select
+                  value={marketCondition}
+                  onChange={(e) => handleControl('market_condition', e.target.value)}
+                  className="bg-[#1E293B] border border-white/10 text-[11px] text-amber-500 rounded-md py-1 px-2.5 font-mono focus:outline-none focus:border-amber-500/50 cursor-pointer shadow"
+                  id="market-condition-selector"
+                >
+                  <option value="normal">Normal (Sideways)</option>
+                  <option value="bullish">Bully (Pataas Trend)</option>
+                  <option value="bearish">Bearish (Pababa Trend)</option>
+                  <option value="volatile">Volatile Chaos (Mabilis)</option>
+                  <option value="range">Range Bound (Gitna)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {/* MANUAL TRADING & EA CONTROLS */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6" id="controls-panel-row">
             
@@ -1159,7 +1217,6 @@ export default function App() {
                   { id: 'positions', label: `Mga Open Positions (${openTrades.length})`, icon: Activity },
                   { id: 'history', label: `Kasaysayan (${closedTrades.length})`, icon: BookOpen },
                   { id: 'metrics', label: 'Estatistika ng Robot', icon: BarChart3 },
-                  { id: 'coach', label: 'Artchie AI Risk Coach', icon: Brain },
                 ].map(tab => {
                   const Icon = tab.icon;
                   return (
@@ -1353,59 +1410,6 @@ export default function App() {
                     </motion.div>
                   )}
 
-                  {/* TAB 4: AI RISK COACH COOPERATING WITH GEMINI */}
-                  {activeTab === 'coach' && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      className="flex flex-col gap-4 font-sans"
-                      key="tab-coach"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[#0A0E17] p-4 border border-white/5 rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2.5 bg-amber-500/10 rounded-xl shrink-0">
-                            <Brain className="h-5 w-5 text-amber-500" />
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-semibold text-white">Artchie AI Coach • Custom Risk Advisory</h4>
-                            <p className="text-xs text-slate-400">Hayaang suriin ng Gemini ang iyong parameter risk, active drawdown, at moving averages.</p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={handleRequestAiAnalysis}
-                          disabled={isAiLoading}
-                          className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs tracking-wider transition-all shadow-md shadow-amber-500/10 disabled:opacity-50 shrink-0 cursor-pointer"
-                          id="ai-analysis-btn"
-                        >
-                          {isAiLoading ? 'Sinusuri ng AI...' : 'Tawagin si AI Coach'}
-                        </button>
-                      </div>
-
-                      {/* AI Response Display */}
-                      <div className="bg-[#0A0E17]/30 border border-white/5 rounded-lg p-5 min-h-[140px] relative font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
-                        {isAiLoading ? (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0A0E17]/95 rounded-lg z-10">
-                            <Activity className="h-8 w-8 text-amber-500 animate-spin mb-2" />
-                            <span className="text-[11px] text-slate-400">Binabasa ang statistics, RSI levels, at basket drawdowns...</span>
-                          </div>
-                        ) : null}
-
-                        {aiAnalysis ? (
-                          <div className="prose prose-invert prose-xs font-sans max-w-none text-slate-300 leading-relaxed" id="ai-response-text">
-                            {aiAnalysis}
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center justify-center py-8 text-slate-500 text-center">
-                            <Brain className="h-8 w-8 mb-2 text-slate-600" />
-                            <p className="text-xs font-semibold text-slate-300">Pindutin ang &quot;Tawagin si AI Coach&quot; sa itaas.</p>
-                            <p className="text-[10px] text-slate-600 max-w-sm mt-1">Isusumite ng server ang iyong in-memory trades at settings kay Gemini para sa real-time risk assessment.</p>
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-
                 </AnimatePresence>
               </div>
             </div>
@@ -1413,8 +1417,8 @@ export default function App() {
 
         </div>
 
-        {/* RIGHT COLUMN: MT4 DASHBOARD FRAME (4 Cols) */}
-        <div className="lg:col-span-4 flex flex-col gap-6" id="right-column">
+        {/* RIGHT COLUMN: MT4 DASHBOARD FRAME (3 Cols) */}
+        <div className="lg:col-span-3 flex flex-col gap-6" id="right-column">
           
           {/* IDENTICAL MT4 DRAW DASHBOARD FRAME */}
           <div className="bg-[#191970]/95 border border-white/30 backdrop-blur shadow-2xl rounded-sm p-4 overflow-hidden" id="mt4-panel-frame">
@@ -1465,10 +1469,19 @@ export default function App() {
                 </span>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-white/20">
+              <div className="mt-3 pt-3 border-t border-white/20 flex flex-col gap-2">
                 <div className="text-[11px] text-white italic leading-snug">
                   Aksyon: <span className="text-amber-300">{currentAction}</span>
                 </div>
+                
+                {/* PARAMETER SETUP BUTTON - MT4 INTEGRATED */}
+                <button 
+                  onClick={() => setShowSettingsModal(true)}
+                  className="w-full mt-2 flex items-center justify-center gap-1.5 py-1.5 bg-[#2A2E45]/80 hover:bg-[#3B4161] border border-white/20 hover:border-amber-500/40 text-[11px] text-slate-200 hover:text-white rounded transition-all font-mono cursor-pointer shadow-md"
+                  id="open-settings-modal-btn"
+                >
+                  <Settings className="h-3.5 w-3.5 text-amber-500" /> Parameter Setup
+                </button>
               </div>
             </div>
           </div>
@@ -1599,74 +1612,6 @@ export default function App() {
                   {eaEnabled ? 'Pause Robot' : 'Start Robot'}
                 </button>
               </div>
-            </div>
-          </div>
-
-          {/* SYSTEM CONFIGURATION PANEL (Moved to the bottom of risk-management) */}
-          <div className="bg-[#0F172A]/50 border border-white/10 rounded-xl p-5 flex flex-col justify-between shadow-xl" id="ea-configurator-card">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2 font-mono">
-                  <Sliders className="h-4 w-4 text-amber-500" /> Robot Controls at Setup
-                </h3>
-                <button 
-                  onClick={() => setShowSettingsModal(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-[#1E293B] border border-white/10 text-xs text-slate-300 hover:text-white rounded-md hover:border-white/20 transition-all font-mono cursor-pointer"
-                  id="open-settings-modal-btn"
-                >
-                  <Settings className="h-3.5 w-3.5" /> Parameter Setup
-                </button>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                {/* AUTO TRADING EA SWITCH */}
-                <div className="flex items-center justify-between bg-[#0A0E17] p-3 border border-white/5 rounded-lg">
-                  <div>
-                    <span className="text-xs font-semibold text-white block">Artchie FXROBOT 3.0 Mode</span>
-                    <span className="text-[10px] text-slate-400">Kung naka-ON, ang robot ang magka-crossover at grid averaging.</span>
-                  </div>
-                  <button
-                    onClick={() => handleControl('ea_toggle')}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300 cursor-pointer ${
-                      eaEnabled ? 'bg-amber-500' : 'bg-slate-800'
-                    }`}
-                    id="ea-toggle-switch"
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-all duration-300 ${
-                        eaEnabled ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* MARKET CONDITION CHANGER */}
-                <div className="flex items-center justify-between bg-[#0A0E17] p-3 border border-white/5 rounded-lg">
-                  <div>
-                    <span className="text-xs font-semibold text-white block">Tatakbo sa Kundisyon</span>
-                    <span className="text-[10px] text-slate-400">Kontrolin ang takbo ng presyo para subukan ang robot.</span>
-                  </div>
-                  <select
-                    value={marketCondition}
-                    onChange={(e) => handleControl('market_condition', e.target.value)}
-                    className="bg-[#1E293B] border border-white/10 text-xs text-amber-500 rounded-md py-1 px-2 font-mono focus:outline-none focus:border-amber-500/50 cursor-pointer"
-                    id="market-condition-selector"
-                  >
-                    <option value="normal">Normal (Sideways)</option>
-                    <option value="bullish">Bully (Pataas Trend)</option>
-                    <option value="bearish">Bearish (Pababa Trend)</option>
-                    <option value="volatile">Volatile Chaos (Mabilis)</option>
-                    <option value="range">Range Bound (Gitna)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-white/10 flex items-center gap-2">
-              <Info className="h-4 w-4 text-amber-500 shrink-0" />
-              <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
-                Subukan ang Martingale Grid system sa <strong className="text-amber-500">Bully / Bearish Trend</strong> para makita kung paano ito nag-aaverage down at paano nito pinapagana ang basket management feature!
-              </p>
             </div>
           </div>
 
