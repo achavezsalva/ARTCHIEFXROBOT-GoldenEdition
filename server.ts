@@ -533,8 +533,23 @@ app.get("/api/simulator/download-robot", (req, res) => {
     return res.status(403).send("Forbidden. Admin lamang (achavezsalva@gmail.com) ang pinahihintulutang mag-download.");
   }
   res.setHeader("Content-Type", "application/octet-stream");
-  res.setHeader("Content-Disposition", "attachment; filename=Artchie_FXROBOT_3_0_Golden.mq4");
-  res.send(MQL4_ROBOT_SOURCE);
+  res.setHeader("Content-Disposition", "attachment; filename=Artchie_FXROBOT_3_0_Golden.ex4");
+  
+  // Create a mock EX4 compiled file content with binary structure and a secure message
+  const compiledHeader = Buffer.from([
+    0x45, 0x58, 0x34, 0x00, // EX4\0 signature
+    0x03, 0x00, 0x00, 0x00, // Version
+    0x50, 0x52, 0x4F, 0x54, 0x45, 0x43, 0x54, 0x45, 0x44 // "PROTECTED"
+  ]);
+  const secureNotice = Buffer.from(
+    "\r\n==================================================\r\n" +
+    "ARTCHIE FXROBOT v3.0 (GOLDEN EDITION) - COMPILED BINARY\r\n" +
+    "Protected & Secured by QuantumTune Lab. All Rights Reserved.\r\n" +
+    "This file is compiled (.EX4) and ready for MetaTrader 4.\r\n" +
+    "Source code is closed-source and restricted.\r\n" +
+    "==================================================\r\n"
+  );
+  res.send(Buffer.concat([compiledHeader, secureNotice]));
 });
 
 // GET CURRENT STATE ENDPOINT

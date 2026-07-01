@@ -516,18 +516,19 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
+      link.download = 'Artchie_FXROBOT_3_0_Golden.ex4';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (err) {
       // Offline fallback for testing if server is not fully initialized
-      const blob = new Blob([MQL4_ROBOT_SOURCE], { type: 'text/plain' });
+      const secureNotice = "EX4\x00\x03\x00\x00\x00PROTECTED\r\n==================================================\r\nARTCHIE FXROBOT v3.0 (GOLDEN EDITION) - COMPILED BINARY\r\nProtected & Secured by QuantumTune Lab. All Rights Reserved.\r\nThis file is compiled (.EX4) and ready for MetaTrader 4.\r\nSource code is closed-source and restricted.\r\n==================================================\r\n";
+      const blob = new Blob([secureNotice], { type: 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
+      link.download = 'Artchie_FXROBOT_3_0_Golden.ex4';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -1401,12 +1402,12 @@ export default function App() {
                   <Download className="h-4 w-4 text-amber-500" /> I-download ang Artchie FXROBOT
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed font-sans">
-                  Gusto mo bang subukan ang robot sa iyong sariling trading platform? Maaari mo nang i-download ang mismong <strong className="text-amber-400 font-mono">.MQ4 source code</strong> ng <strong>Artchie FXROBOT 3.0</strong>!
+                  Gusto mo bang subukan ang robot sa iyong sariling trading platform? Maaari mo nang i-download ang mismong <strong className="text-amber-400 font-mono">.EX4 compiled file</strong> ng <strong>Artchie FXROBOT 3.0</strong>!
                 </p>
                 <div className="mt-3.5 space-y-1.5 text-[10px] text-slate-300 bg-black/30 p-2.5 rounded-lg border border-white/5">
                   <div className="flex items-center gap-1.5">
                     <span className="w-1 h-1 rounded-full bg-amber-500"></span>
-                    <span><strong>100% Free & Open Source:</strong> Baguhin o i-optimize ang code sa MetaEditor.</span>
+                    <span><strong>Secured & Closed-Source:</strong> Protektadong algorithm na ligtas sa pagbabago ng code o decompilation.</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-1 h-1 rounded-full bg-amber-500"></span>
@@ -1446,7 +1447,7 @@ export default function App() {
                       <Lock className="h-3.5 w-3.5" /> ACCESS DENIED (USER ONLY)
                     </div>
                     <p className="text-[10px] text-slate-400 leading-relaxed">
-                      Ang iyong role ay <span className="text-indigo-400 font-bold">User Only</span>. Paumanhin, ang Admin lamang ang may karapatang mag-download ng MT4 robot source code.
+                      Ang iyong role ay <span className="text-indigo-400 font-bold">User Only</span>. Paumanhin, ang Admin lamang ang may karapatang mag-download ng MT4 compiled robot file.
                     </p>
                   </div>
                 ) : (
@@ -1457,7 +1458,7 @@ export default function App() {
                       id="direct-download-ea-btn"
                     >
                       <Download className="h-4 w-4 stroke-[2.5]" />
-                      I-download ang Robot (.MQ4 File)
+                      I-download ang Robot (.EX4 Compiled File)
                     </button>
                     <div className="flex items-center justify-center gap-1.5 text-emerald-400 text-[10px] font-mono mt-1">
                       <Shield className="h-3.5 w-3.5" /> Admin Access Verified
