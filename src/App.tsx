@@ -33,9 +33,20 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Candle, Trade, EASettings, SimulatorState, RiskMetrics, PAIR_CONFIGS } from './types';
+import { 
+  createInitialState, 
+  tickState, 
+  initCandlesForPair, 
+  getTimestampForMonthYear, 
+  getMonthName, 
+  generateLocalAiAnalysis, 
+  updateIndicatorsForLatest,
+  DEFAULT_SETTINGS 
+} from './simulatorEngine';
+import { MQL4_ROBOT_SOURCE } from './robot_source';
 
 export default function App() {
-  const [state, setState] = useState<SimulatorState | null>(null);
+  const [state, setState] = useState<SimulatorState>(() => createInitialState());
   const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'metrics' | 'coach'>('positions');
   const [manualLots, setManualLots] = useState<number>(0.01);
   const [aiAnalysis, setAiAnalysis] = useState<string>('');
@@ -45,7 +56,7 @@ export default function App() {
   const [customBalance, setCustomBalance] = useState<string>('');
   
   // Settings Form State
-  const [formSettings, setFormSettings] = useState<EASettings | null>(null);
+  const [formSettings, setFormSettings] = useState<EASettings>(() => ({ ...DEFAULT_SETTINGS }));
 
   // Backtest Date Period Form State
   const [testPeriodEnabled, setTestPeriodEnabled] = useState<boolean>(false);
@@ -54,6 +65,8 @@ export default function App() {
   const [testEndMonth, setTestEndMonth] = useState<number>(12);
   const [testEndYear, setTestEndYear] = useState<number>(2026);
   const [hasInitializedPeriod, setHasInitializedPeriod] = useState<boolean>(false);
+
+  const simTimeRef = useRef<number>(state.candles[state.candles.length - 1]?.time || (Math.floor(Date.now() / 1000) - 3600 * 24));
 
   // Sync backtest parameters when state loads first time
   useEffect(() => {
@@ -67,38 +80,64 @@ export default function App() {
     }
   }, [state, hasInitializedPeriod]);
 
-  // Fetch Simulator state periodically
+  // Client-side simulation loop
   useEffect(() => {
-    const fetchState = async () => {
-      try {
-        const res = await fetch('/api/simulator/state');
-        if (res.ok) {
-          const data: SimulatorState = await res.json();
-          setState(data);
-          if (!formSettings) {
-            setFormSettings(data.settings);
+    if (!state.isRunning || state.speed === 0) return;
+
+    const interval = setInterval(() => {
+      setState(prev => {
+        if (!prev.isRunning || prev.speed === 0) return prev;
+
+        let s = { ...prev };
+        const secondsToAdvance = prev.speed;
+
+        for (let t = 0; t < secondsToAdvance; t++) {
+          simTimeRef.current += 1;
+
+          // Check if backtest period has ended
+          if (prev.testPeriodEnabled && prev.testStartMonth && prev.testStartYear && prev.testEndMonth && prev.testEndYear) {
+            const endTimestamp = getTimestampForMonthYear(prev.testEndMonth, prev.testEndYear, true);
+            if (simTimeRef.current >= endTimestamp) {
+              s.isRunning = false;
+              s.currentAction = `Tapos na ang Backtest Period (${getMonthName(prev.testStartMonth)} ${prev.testStartYear} hanggang ${getMonthName(prev.testEndMonth)} ${prev.testEndYear})!`;
+              break;
+            }
           }
+
+          // If we cross a 1-minute boundary, finalize current candle and open a new one
+          if (simTimeRef.current % 60 === 0) {
+            const candles = [...s.candles];
+            const last = candles[candles.length - 1];
+
+            // Finalize indicators for the closing candle
+            updateIndicatorsForLatest(candles, s.settings);
+
+            // Append a new 1M candle
+            candles.push({
+              time: simTimeRef.current,
+              open: last.close,
+              high: last.close,
+              low: last.close,
+              close: last.close,
+            });
+
+            // Limit history to 200 candles to keep browser responsive
+            if (candles.length > 200) {
+              candles.shift();
+            }
+            s.candles = candles;
+          }
+
+          // Execute simulation tick actions
+          s = tickState(s, simTimeRef.current);
         }
-      } catch (err) {
-        console.error('Error fetching simulator state:', err);
-      }
-    };
 
-    fetchState();
-    const interval = setInterval(fetchState, 500);
+        return s;
+      });
+    }, 400);
+
     return () => clearInterval(interval);
-  }, [formSettings]);
-
-  if (!state) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0A0E17] text-[#E2E8F0] font-sans" id="loading-screen">
-        <div className="w-12 h-12 bg-amber-500 rounded-lg flex items-center justify-center mb-4 animate-bounce">
-          <TrendingUp className="h-6 w-6 text-black" />
-        </div>
-        <p className="text-sm font-mono text-slate-400">Inisyalisa ang Forex Simulator at Artchie FXROBOT 3.0...</p>
-      </div>
-    );
-  }
+  }, [state.isRunning, state.speed]);
 
   const {
     balance,
@@ -125,103 +164,287 @@ export default function App() {
 
   const currentPairConfig = PAIR_CONFIGS[activePair];
 
-  // HANDLE CONTROLS
-  const handleControl = async (action: string, value?: any) => {
-    try {
-      await fetch('/api/simulator/control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, value }),
-      });
-    } catch (err) {
-      console.error('Error sending control command:', err);
-    }
-  };
-
-  const handleUpdateTestPeriod = async () => {
-    try {
-      await fetch('/api/simulator/control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update_test_period',
-          value: {
-            testPeriodEnabled,
-            testStartMonth,
-            testStartYear,
-            testEndMonth,
-            testEndYear
+  // HANDLE CONTROLS (Fully Client-side)
+  const handleControl = (action: string, value?: any) => {
+    setState(prev => {
+      let s = { ...prev };
+      
+      if (action === "toggle_run") {
+        s.isRunning = value !== undefined ? value : !s.isRunning;
+      } else if (action === "set_balance") {
+        const amt = Math.max(1, Number(value));
+        s.balance = amt;
+        s.equity = amt + s.floatingPL;
+        s.freeMargin = s.equity - s.margin;
+      } else if (action === "speed") {
+        s.speed = Number(value);
+      } else if (action === "market_condition") {
+        s.marketCondition = value;
+      } else if (action === "active_pair") {
+        s.activePair = value;
+        
+        // Close open positions if pair changes (just like server-side does)
+        const config = PAIR_CONFIGS[prev.activePair];
+        const currentPrice = prev.candles[prev.candles.length - 1]?.close || config.basePrice;
+        const spread = config.spreadPips * config.pipSize;
+        const bid = currentPrice;
+        const ask = currentPrice + spread;
+        
+        const closed = [...prev.closedTrades];
+        let bal = prev.balance;
+        
+        prev.openTrades.forEach(t => {
+          const exitPrice = t.type === 'BUY' ? bid : ask;
+          const priceDiff = t.type === 'BUY' ? (exitPrice - t.openPrice) : (t.openPrice - exitPrice);
+          let profit = 0;
+          if (prev.activePair === 'USDJPY') {
+            profit = (priceDiff / exitPrice) * t.lots * 100000;
+          } else {
+            profit = priceDiff * t.lots * 100000;
           }
-        }),
+          closed.push({
+            ...t,
+            closePrice: exitPrice,
+            closeTime: simTimeRef.current,
+            profit,
+            comment: `${t.comment} (Pair Swapped)`
+          });
+          bal += profit;
+        });
+
+        const initTime = prev.testPeriodEnabled 
+          ? getTimestampForMonthYear(prev.testStartMonth || 1, prev.testStartYear || 2026, false)
+          : Math.floor(Date.now() / 1000) - 3600 * 24;
+        simTimeRef.current = initTime;
+        const newCandles = initCandlesForPair(value, initTime);
+
+        s.openTrades = [];
+        s.closedTrades = closed;
+        s.balance = bal;
+        s.floatingPL = 0;
+        s.equity = bal;
+        s.margin = 0;
+        s.freeMargin = bal;
+        s.drawdownPercent = 0;
+        s.candles = newCandles;
+      } else if (action === "ea_toggle") {
+        s.eaEnabled = !s.eaEnabled;
+      } else if (action === "reset") {
+        const initTime = s.testPeriodEnabled 
+          ? getTimestampForMonthYear(s.testStartMonth || 1, s.testStartYear || 2026, false)
+          : Math.floor(Date.now() / 1000) - 3600 * 24;
+        simTimeRef.current = initTime;
+        const newCandles = initCandlesForPair(s.activePair, initTime);
+
+        s.balance = 10000;
+        s.equity = 10000;
+        s.floatingPL = 0;
+        s.margin = 0;
+        s.freeMargin = 10000;
+        s.drawdownPercent = 0;
+        s.totalClosedProfit = 0;
+        s.openTrades = [];
+        s.closedTrades = [];
+        s.isRunning = false;
+        s.speed = 5;
+        s.marketCondition = "normal";
+        s.currentAction = "Naka-pause. Pindutin ang Play para magsimula.";
+        s.eaEnabled = true;
+        s.candles = newCandles;
+      } else if (action === "replay_step") {
+        s.isRunning = false;
+        for (let i = 0; i < 60; i++) {
+          simTimeRef.current += 1;
+          if (simTimeRef.current % 60 === 0) {
+            const candlesCopy = [...s.candles];
+            const last = candlesCopy[candlesCopy.length - 1];
+            updateIndicatorsForLatest(candlesCopy, s.settings);
+            candlesCopy.push({
+              time: simTimeRef.current,
+              open: last.close,
+              high: last.close,
+              low: last.close,
+              close: last.close,
+            });
+            if (candlesCopy.length > 200) {
+              candlesCopy.shift();
+            }
+            s.candles = candlesCopy;
+          }
+          s = tickState(s, simTimeRef.current);
+        }
+      }
+      
+      return s;
+    });
+  };
+
+  const handleUpdateTestPeriod = () => {
+    setState(prev => {
+      const initTime = testPeriodEnabled 
+        ? getTimestampForMonthYear(testStartMonth, testStartYear, false)
+        : Math.floor(Date.now() / 1000) - 3600 * 24;
+      simTimeRef.current = initTime;
+      const newCandles = initCandlesForPair(prev.activePair, initTime);
+
+      return {
+        ...prev,
+        testPeriodEnabled,
+        testStartMonth,
+        testStartYear,
+        testEndMonth,
+        testEndYear,
+        balance: 10000,
+        equity: 10000,
+        floatingPL: 0,
+        margin: 0,
+        freeMargin: 10000,
+        drawdownPercent: 0,
+        totalClosedProfit: 0,
+        openTrades: [],
+        closedTrades: [],
+        isRunning: false,
+        speed: 5,
+        marketCondition: "normal",
+        currentAction: testPeriodEnabled 
+          ? `Naka-set ang Backtest mula ${getMonthName(testStartMonth)} ${testStartYear}. Pindutin ang Play para simulan.` 
+          : "Naka-pause. Pindutin ang Play para magsimula.",
+        eaEnabled: true,
+        candles: newCandles,
+      };
+    });
+  };
+
+  const handleManualTrade = (type: 'BUY' | 'SELL') => {
+    setState(prev => {
+      const config = PAIR_CONFIGS[prev.activePair];
+      const candles = prev.candles;
+      const price = candles[candles.length - 1].close;
+      const spread = config.spreadPips * config.pipSize;
+      const tradePrice = type === 'BUY' ? (price + spread) : price;
+
+      const newTicket = 10000 + prev.openTrades.length + prev.closedTrades.length + 1;
+      const newTrade: Trade = {
+        ticket: newTicket,
+        symbol: prev.activePair,
+        type,
+        lots: manualLots,
+        openPrice: tradePrice,
+        openTime: simTimeRef.current,
+        profit: 0,
+        comment: "Manual Trade",
+        magicNumber: prev.settings.MagicNumber
+      };
+
+      return {
+        ...prev,
+        openTrades: [...prev.openTrades, newTrade]
+      };
+    });
+  };
+
+  const handleCloseAll = () => {
+    setState(prev => {
+      const config = PAIR_CONFIGS[prev.activePair];
+      const candles = prev.candles;
+      const currentPrice = candles[candles.length - 1].close;
+      const spread = config.spreadPips * config.pipSize;
+      const bid = currentPrice;
+      const ask = currentPrice + spread;
+
+      const closed = [...prev.closedTrades];
+      let bal = prev.balance;
+      
+      prev.openTrades.forEach(trade => {
+        const exitPrice = trade.type === 'BUY' ? bid : ask;
+        const priceDiff = trade.type === 'BUY' ? (exitPrice - trade.openPrice) : (trade.openPrice - exitPrice);
+        let profit = 0;
+        if (prev.activePair === 'USDJPY') {
+          profit = (priceDiff / exitPrice) * trade.lots * 100000;
+        } else {
+          profit = priceDiff * trade.lots * 100000;
+        }
+
+        closed.push({
+          ...trade,
+          closePrice: exitPrice,
+          closeTime: simTimeRef.current,
+          profit,
+          comment: `${trade.comment} (Manual Close All)`
+        });
+        bal += profit;
       });
-    } catch (err) {
-      console.error('Error updating backtest period:', err);
-    }
+
+      return {
+        ...prev,
+        openTrades: [],
+        closedTrades: closed,
+        balance: bal,
+        floatingPL: 0,
+        equity: bal,
+        margin: 0,
+        freeMargin: bal,
+        drawdownPercent: 0,
+      };
+    });
   };
 
-  const handleManualTrade = async (type: 'BUY' | 'SELL') => {
-    try {
-      await fetch('/api/simulator/trade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, lots: manualLots }),
-      });
-    } catch (err) {
-      console.error('Error placing manual trade:', err);
-    }
-  };
-
-  const handleCloseAll = async () => {
-    try {
-      await fetch('/api/simulator/close-all', { method: 'POST' });
-    } catch (err) {
-      console.error('Error closing all positions:', err);
-    }
-  };
-
-  const handleSetBalance = async (e?: FormEvent) => {
+  const handleSetBalance = (e?: FormEvent) => {
     if (e) e.preventDefault();
     const amt = Number(customBalance);
     if (!isNaN(amt) && amt > 0) {
-      await handleControl('set_balance', amt);
+      handleControl('set_balance', amt);
       setIsEditingBalance(false);
     }
   };
 
-  const handleSaveSettings = async (e: FormEvent) => {
+  const handleSaveSettings = (e: FormEvent) => {
     e.preventDefault();
     if (!formSettings) return;
-    try {
-      const res = await fetch('/api/simulator/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formSettings),
-      });
-      if (res.ok) {
-        setShowSettingsModal(false);
-      }
-    } catch (err) {
-      console.error('Error saving settings:', err);
-    }
+    setState(prev => ({
+      ...prev,
+      settings: formSettings
+    }));
+    setShowSettingsModal(false);
   };
 
   const handleRequestAiAnalysis = async () => {
     setIsAiLoading(true);
     setAiAnalysis('');
     try {
-      const res = await fetch('/api/simulator/ai-analysis', { method: 'POST' });
+      // Send the current simulation state in body so that server-side remains stateless
+      const res = await fetch('/api/simulator/ai-analysis', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
       if (res.ok) {
         const data = await res.json();
         setAiAnalysis(data.analysis);
       } else {
-        setAiAnalysis('Naging abala ang network. Paki-subukan ulit mamaya.');
+        throw new Error('API server returned error');
       }
     } catch (err) {
-      console.error('AI analysis error:', err);
-      setAiAnalysis('Hindi makakonekta sa AI Coach server.');
+      console.error('AI analysis error, using local fallback:', err);
+      // Perfect, seamless fallback analysis on Vercel / serverless setups
+      const localAdvice = generateLocalAiAnalysis(state);
+      setAiAnalysis(localAdvice);
     } finally {
       setIsAiLoading(false);
     }
+  };
+
+  const handleDownloadRobot = (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    const blob = new Blob([MQL4_ROBOT_SOURCE], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // RISK & METRICS CALCULATIONS
@@ -414,11 +637,12 @@ export default function App() {
       <nav className="h-14 border-b border-white/10 bg-[#0F172A] flex items-center justify-between px-6 sticky top-0 z-40 shrink-0" id="main-header">
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
-              <svg className="w-5 h-5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-            </div>
+            <img 
+              src="/img/Artchie_FXROBOTlogo.png" 
+              alt="Artchie FX Robot" 
+              className="w-8 h-8 rounded-lg object-cover border border-amber-500/20"
+              referrerPolicy="no-referrer"
+            />
             <div>
               <span className="text-base font-bold tracking-tight text-white">
                 ARTCHIE<span className="text-amber-500">FX</span> ROBOT <span className="hidden sm:inline-block text-[9px] bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1.5 py-0.5 rounded ml-2 uppercase font-mono font-semibold">v3.0 Golden</span>
@@ -485,10 +709,20 @@ export default function App() {
 
 
             {/* SVG CANDLESTICK GRAPH */}
-            <div className="w-full h-[520px] relative rounded-lg border border-white/5 bg-[#0A0E17] select-none">
+            <div className="w-full h-[520px] relative rounded-lg border border-white/5 bg-[#0A0E17] select-none overflow-hidden">
+              {/* Background Logo with 40% opacity */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0 opacity-40">
+                <img 
+                  src="/img/Artchie_FXROBOTlogo.png" 
+                  alt="Chart Background Logo" 
+                  className="w-80 h-80 object-contain"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
               <svg 
                 viewBox={`0 0 ${chartWidth} ${chartHeight}`} 
-                className="w-full h-full"
+                className="w-full h-full relative z-10"
                 id="candlestick-svg"
               >
                 {/* Horizontal grid lines */}
@@ -865,14 +1099,14 @@ export default function App() {
               </div>
 
               <div className="mt-4 flex flex-col gap-2">
-                <a
-                  href="/api/simulator/download-robot"
+                <button
+                  onClick={handleDownloadRobot}
                   className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs text-center rounded-lg transition-all shadow-lg shadow-amber-500/20 active:scale-98 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider"
                   id="direct-download-ea-btn"
                 >
                   <Download className="h-4 w-4 stroke-[2.5]" />
                   I-download ang Robot (.MQ4 File)
-                </a>
+                </button>
                 <p className="text-[9px] text-slate-500 text-center font-sans">
                   Tugma sa MetaTrader 4 (MT4) Terminal • Maaaring patakbuhin sa Demo o Live Accounts.
                 </p>

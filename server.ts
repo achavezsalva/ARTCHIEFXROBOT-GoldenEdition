@@ -636,29 +636,39 @@ app.post("/api/simulator/close-all", (req, res) => {
 // AI RISK ANALYSIS ENHANCED BY GEMINI
 app.post("/api/simulator/ai-analysis", async (req, res) => {
   try {
-    const candles = pairCandles[activePair] || [];
-    const latestCandle = candles[candles.length - 1];
+    // If the client sends the simulator state, use it (making the API stateless)
+    const clientState = req.body && req.body.candles ? req.body : null;
+    
+    const activePairVal = clientState ? clientState.activePair : activePair;
+    const balanceVal = clientState ? clientState.balance : balance;
+    const openTradesVal = clientState ? clientState.openTrades : openTrades;
+    const closedTradesVal = clientState ? clientState.closedTrades : closedTrades;
+    const marketConditionVal = clientState ? clientState.marketCondition : marketCondition;
+    const settingsVal = clientState ? clientState.settings : settings;
+    const candlesVal = clientState ? clientState.candles : (pairCandles[activePair] || []);
+
+    const latestCandle = candlesVal[candlesVal.length - 1];
 
     // Build context
-    const openTradesCount = openTrades.length;
-    const floatingPL = openTrades.reduce((sum, t) => sum + t.profit, 0);
-    const equity = balance + floatingPL;
-    const margin = openTrades.reduce((sum, t) => sum + (t.lots * 100000) / 500, 0);
-    const drawdownPercent = balance > 0 ? ((floatingPL < 0 ? -floatingPL : 0) / balance) * 100 : 0;
+    const openTradesCount = openTradesVal.length;
+    const floatingPL = openTradesVal.reduce((sum: number, t: any) => sum + t.profit, 0);
+    const equity = balanceVal + floatingPL;
+    const margin = openTradesVal.reduce((sum: number, t: any) => sum + (t.lots * 100000) / 500, 0);
+    const drawdownPercent = balanceVal > 0 ? ((floatingPL < 0 ? -floatingPL : 0) / balanceVal) * 100 : 0;
 
-    const totalClosedCount = closedTrades.length;
-    const totalWins = closedTrades.filter(t => t.profit > 0).length;
+    const totalClosedCount = closedTradesVal.length;
+    const totalWins = closedTradesVal.filter((t: any) => t.profit > 0).length;
     const winRate = totalClosedCount > 0 ? (totalWins / totalClosedCount) * 100 : 0;
 
     const context = {
-      pair: activePair,
-      balance,
+      pair: activePairVal,
+      balance: balanceVal,
       equity,
       drawdownPercent,
       floatingPL,
       margin,
       openTradesCount,
-      marketCondition,
+      marketCondition: marketConditionVal,
       indicators: {
         price: latestCandle ? latestCandle.close : 0,
         fastMa: latestCandle ? latestCandle.fastMa : 0,
@@ -666,7 +676,7 @@ app.post("/api/simulator/ai-analysis", async (req, res) => {
         rsi: latestCandle ? latestCandle.rsi : 0,
         atr: latestCandle ? latestCandle.atr : 0,
       },
-      eaSettings: settings,
+      eaSettings: settingsVal,
       totalClosedCount,
       winRate,
     };
