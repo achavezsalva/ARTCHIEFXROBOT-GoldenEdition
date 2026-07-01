@@ -454,11 +454,84 @@ function startSimTimer() {
   }, 400);
 }
 
+// USER DATABASE STRUCTURE
+interface User {
+  email: string;
+  password?: string;
+  role: 'admin' | 'user';
+}
+
+const users: User[] = [
+  { email: "achavezsalva@gmail.com", password: "adminpassword", role: "admin" } // seed admin
+];
+
 // Start simulation immediately
 startSimTimer();
 
-// GET CURRENT STATE ENDPOINT
+// AUTH ENDPOINTS
+app.post("/api/auth/register", (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Required ang email at password!" });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  const existing = users.find(u => u.email === cleanEmail);
+  if (existing) {
+    return res.status(400).json({ error: "Ang email na ito ay rehistrado na!" });
+  }
+  
+  // Automatically make achavezsalva@gmail.com an admin
+  const role = cleanEmail === "achavezsalva@gmail.com" ? "admin" : "user";
+  const newUser: User = { email: cleanEmail, password, role };
+  users.push(newUser);
+  
+  res.json({ success: true, user: { email: cleanEmail, role } });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Required ang email at password!" });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  
+  // Special auto-create admin if logging in first time with default password
+  let user = users.find(u => u.email === cleanEmail);
+  if (!user && cleanEmail === "achavezsalva@gmail.com") {
+    user = { email: cleanEmail, password, role: "admin" };
+    users.push(user);
+  }
+  
+  if (!user || user.password !== password) {
+    return res.status(400).json({ error: "Maling email o password!" });
+  }
+  
+  res.json({ success: true, user: { email: cleanEmail, role: user.role } });
+});
+
+app.post("/api/auth/google", (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: "Required ang Google email!" });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  let user = users.find(u => u.email === cleanEmail);
+  
+  const role = cleanEmail === "achavezsalva@gmail.com" ? "admin" : "user";
+  if (!user) {
+    user = { email: cleanEmail, role };
+    users.push(user);
+  }
+  
+  res.json({ success: true, user: { email: cleanEmail, role } });
+});
+
+// GET CURRENT STATE ENDPOINT (PROTECTED WITH EMAIL QUERY CHECK)
 app.get("/api/simulator/download-robot", (req, res) => {
+  const email = (req.query.email as string || "").trim().toLowerCase();
+  if (email !== "achavezsalva@gmail.com") {
+    return res.status(403).send("Forbidden. Admin lamang (achavezsalva@gmail.com) ang pinahihintulutang mag-download.");
+  }
   res.setHeader("Content-Type", "application/octet-stream");
   res.setHeader("Content-Disposition", "attachment; filename=Artchie_FXROBOT_3_0_Golden.mq4");
   res.send(MQL4_ROBOT_SOURCE);

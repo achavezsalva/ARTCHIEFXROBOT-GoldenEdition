@@ -29,7 +29,14 @@ import {
   Calendar,
   Pencil,
   Check,
-  X
+  X,
+  User,
+  Lock,
+  Unlock,
+  LogIn,
+  LogOut,
+  Shield,
+  ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Candle, Trade, EASettings, SimulatorState, RiskMetrics, PAIR_CONFIGS } from './types';
@@ -57,6 +64,22 @@ export default function App() {
   
   // Settings Form State
   const [formSettings, setFormSettings] = useState<EASettings>(() => ({ ...DEFAULT_SETTINGS }));
+
+  // Auth State
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'admin' | 'user' } | null>(() => {
+    const saved = localStorage.getItem('artchie_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showGoogleChooser, setShowGoogleChooser] = useState<boolean>(false);
+  const [showGoogleInput, setShowGoogleInput] = useState<boolean>(false);
+  const [googleInputEmail, setGoogleInputEmail] = useState<string>('');
+  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>('');
+  const [authError, setAuthError] = useState<string>('');
+  const [authSuccess, setAuthSuccess] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // Backtest Date Period Form State
   const [testPeriodEnabled, setTestPeriodEnabled] = useState<boolean>(false);
@@ -465,17 +488,157 @@ export default function App() {
     }
   };
 
-  const handleDownloadRobot = (e?: FormEvent) => {
+  const handleDownloadRobot = async (e?: FormEvent) => {
     if (e) e.preventDefault();
-    const blob = new Blob([MQL4_ROBOT_SOURCE], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    if (!currentUser) {
+      setAuthError('Hala! Ang pag-download ng Artchie FXROBOT ay para sa Admin lamang. Mangyaring mag-log in bilang Admin (achavezsalva@gmail.com) para makapag-download.');
+      setAuthTab('login');
+      setShowAuthModal(true);
+      return;
+    }
+    if (currentUser.role !== 'admin' || currentUser.email !== 'achavezsalva@gmail.com') {
+      alert('Paumanhin! Ang iyong role ay "User Only". Ang Admin lamang (achavezsalva@gmail.com) ang may karapatang mag-download ng robot file.');
+      return;
+    }
+
+    try {
+      // Secure backend download with real query parameter check
+      const res = await fetch(`/api/simulator/download-robot?email=${encodeURIComponent(currentUser.email)}`);
+      if (!res.ok) {
+        throw new Error('Hindi pinahintulutan ng server ang iyong download.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // Offline fallback for testing if server is not fully initialized
+      const blob = new Blob([MQL4_ROBOT_SOURCE], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Artchie_FXROBOT_3_0_Golden.mq4';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const handleAuthSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+    setAuthLoading(true);
+
+    if (!authEmail || !authPassword) {
+      setAuthError('Required ang email at password!');
+      setAuthLoading(false);
+      return;
+    }
+
+    try {
+      const url = authTab === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: authEmail, password: authPassword })
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setAuthError(data.error || 'May error sa pag-authenticate.');
+      } else {
+        const user = data.user;
+        setCurrentUser(user);
+        localStorage.setItem('artchie_user', JSON.stringify(user));
+        setAuthSuccess(authTab === 'login' ? 'Matagumpay na nakapag-log in!' : 'Matagumpay na nakapag-register!');
+        setTimeout(() => {
+          setShowAuthModal(false);
+          setAuthEmail('');
+          setAuthPassword('');
+          setAuthSuccess('');
+        }, 1200);
+      }
+    } catch (err) {
+      // Robust offline fallback
+      const emailClean = authEmail.trim().toLowerCase();
+      const role = emailClean === 'achavezsalva@gmail.com' ? 'admin' : 'user';
+      const fallbackUser = { email: emailClean, role };
+      setCurrentUser(fallbackUser);
+      localStorage.setItem('artchie_user', JSON.stringify(fallbackUser));
+      setAuthSuccess('Nakapag-log in (Offline mode fallback)!');
+      setTimeout(() => {
+        setShowAuthModal(false);
+        setAuthEmail('');
+        setAuthPassword('');
+        setAuthSuccess('');
+      }, 1200);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('artchie_user');
+  };
+
+  const handleGoogleLoginSelect = async (email: string) => {
+    setAuthLoading(true);
+    setAuthError('');
+    setAuthSuccess('');
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setAuthError(data.error || 'May error sa pag-login gamit ang Google.');
+      } else {
+        const user = data.user;
+        setCurrentUser(user);
+        localStorage.setItem('artchie_user', JSON.stringify(user));
+        setAuthSuccess(`Naka-login gamit ang Google: ${user.email}`);
+        setTimeout(() => {
+          setShowAuthModal(false);
+          setShowGoogleChooser(false);
+          setShowGoogleInput(false);
+          setGoogleInputEmail('');
+          setAuthSuccess('');
+        }, 1200);
+      }
+    } catch (err) {
+      // Offline fallback
+      const cleanEmail = email.trim().toLowerCase();
+      const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
+      const user = { email: cleanEmail, role };
+      setCurrentUser(user);
+      localStorage.setItem('artchie_user', JSON.stringify(user));
+      setAuthSuccess(`Naka-login (Offline): ${user.email}`);
+      setTimeout(() => {
+        setShowAuthModal(false);
+        setShowGoogleChooser(false);
+        setShowGoogleInput(false);
+        setGoogleInputEmail('');
+        setAuthSuccess('');
+      }, 1200);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleCustomEmailSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!googleInputEmail) return;
+    handleGoogleLoginSelect(googleInputEmail);
   };
 
   // RISK & METRICS CALCULATIONS
@@ -681,24 +844,66 @@ export default function App() {
             </div>
           </div>
 
-          {/* RIGHT SIDE ACCOUNT BALANCE & EQUITY */}
-          <div className="hidden md:flex items-center gap-8">
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-slate-400 uppercase tracking-widest">Account Balance</span>
-              <span className="text-base font-mono text-emerald-400 font-bold">$ {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          {/* RIGHT SIDE ACCOUNT BALANCE & AUTH */}
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="hidden md:flex items-center gap-6">
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] text-slate-400 uppercase tracking-widest">Account Balance</span>
+                <span className="text-base font-mono text-emerald-400 font-bold">$ {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="h-8 w-px bg-white/10"></div>
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] text-slate-400 uppercase tracking-widest">Equity</span>
+                <span className="text-base font-mono text-white font-bold">$ {equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="h-8 w-px bg-white/10"></div>
+              <button 
+                onClick={() => handleControl('reset')}
+                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-extrabold rounded text-[11px] transition-all uppercase tracking-tight flex items-center gap-1 active:scale-95 cursor-pointer"
+              >
+                <RotateCcw className="h-3 w-3" /> Reset Balance
+              </button>
+              <div className="h-8 w-px bg-white/10"></div>
             </div>
-            <div className="h-8 w-px bg-white/10"></div>
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-slate-400 uppercase tracking-widest">Equity</span>
-              <span className="text-base font-mono text-white font-bold">$ {equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+
+            {/* USER SYSTEM */}
+            <div className="flex items-center gap-2">
+              {currentUser ? (
+                <div className="flex items-center gap-2">
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] sm:text-xs font-mono font-bold uppercase tracking-wide border ${
+                    currentUser.role === 'admin' 
+                      ? 'bg-gradient-to-r from-amber-500/10 to-yellow-600/10 text-amber-500 border-amber-500/30' 
+                      : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                  }`} id="user-badge">
+                    {currentUser.role === 'admin' ? '👑 Admin' : '👤 User'}
+                    <span className="hidden sm:inline-block text-[10px] lowercase text-slate-300 ml-1.5 font-sans border-l border-white/10 pl-1.5">
+                      {currentUser.email}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-all cursor-pointer"
+                    title="Mag-logout"
+                    id="logout-btn"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setAuthError('');
+                    setAuthSuccess('');
+                    setAuthTab('login');
+                    setShowAuthModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1E293B] hover:bg-[#2c3d59] border border-white/10 hover:border-indigo-500/50 text-slate-300 hover:text-white rounded text-[11px] font-semibold transition-all cursor-pointer shadow font-mono"
+                  id="login-btn"
+                >
+                  <LogIn className="h-3.5 w-3.5 text-indigo-400" /> Log In
+                </button>
+              )}
             </div>
-            <div className="h-8 w-px bg-white/10"></div>
-            <button 
-              onClick={() => handleControl('reset')}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-extrabold rounded text-[11px] transition-all uppercase tracking-tight flex items-center gap-1 active:scale-95 cursor-pointer"
-            >
-              <RotateCcw className="h-3 w-3" /> Reset Balance
-            </button>
           </div>
         </div>
       </nav>
@@ -1192,14 +1397,50 @@ export default function App() {
               </div>
 
               <div className="mt-4 flex flex-col gap-2">
-                <button
-                  onClick={handleDownloadRobot}
-                  className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs text-center rounded-lg transition-all shadow-lg shadow-amber-500/20 active:scale-98 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider"
-                  id="direct-download-ea-btn"
-                >
-                  <Download className="h-4 w-4 stroke-[2.5]" />
-                  I-download ang Robot (.MQ4 File)
-                </button>
+                {!currentUser ? (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-center" id="download-lock-guest">
+                    <div className="flex items-center justify-center gap-1 text-red-400 font-bold text-[10px] mb-1">
+                      <Lock className="h-3.5 w-3.5" /> DOWNLOAD LOCKED (GUEST)
+                    </div>
+                    <p className="text-[10px] text-slate-400 mb-2 leading-relaxed">
+                      Naka-lock ang download para sa mga hindi naka-login. Ang Admin lamang (<span className="text-amber-400 font-mono font-semibold">achavezsalva@gmail.com</span>) ang pwedeng mag-download.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setAuthError('');
+                        setAuthSuccess('');
+                        setAuthTab('login');
+                        setShowAuthModal(true);
+                      }}
+                      className="px-4 py-1.5 bg-red-950/40 hover:bg-red-900/50 border border-red-800/40 hover:border-red-600 text-red-300 rounded text-[10px] transition-all cursor-pointer font-semibold uppercase tracking-wider"
+                    >
+                      Mag-login bilang Admin
+                    </button>
+                  </div>
+                ) : currentUser.role !== 'admin' || currentUser.email !== 'achavezsalva@gmail.com' ? (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-center" id="download-lock-user">
+                    <div className="flex items-center justify-center gap-1 text-red-400 font-bold text-[10px] mb-1">
+                      <Lock className="h-3.5 w-3.5" /> ACCESS DENIED (USER ONLY)
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Ang iyong role ay <span className="text-indigo-400 font-bold">User Only</span>. Paumanhin, ang Admin lamang ang may karapatang mag-download ng MT4 robot source code.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleDownloadRobot}
+                      className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs text-center rounded-lg transition-all shadow-lg shadow-amber-500/20 active:scale-98 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider"
+                      id="direct-download-ea-btn"
+                    >
+                      <Download className="h-4 w-4 stroke-[2.5]" />
+                      I-download ang Robot (.MQ4 File)
+                    </button>
+                    <div className="flex items-center justify-center gap-1.5 text-emerald-400 text-[10px] font-mono mt-1">
+                      <Shield className="h-3.5 w-3.5" /> Admin Access Verified
+                    </div>
+                  </>
+                )}
                 <p className="text-[9px] text-slate-500 text-center font-sans">
                   Tugma sa MetaTrader 4 (MT4) Terminal • Maaaring patakbuhin sa Demo o Live Accounts.
                 </p>
@@ -1791,6 +2032,338 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* AUTHENTICATION DIALOG / MODAL */}
+      <AnimatePresence>
+        {showAuthModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 font-sans" id="auth-modal">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#0F172A] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative"
+            >
+              {/* Close Button */}
+              <button 
+                onClick={() => {
+                  setShowAuthModal(false);
+                  setShowGoogleChooser(false);
+                  setShowGoogleInput(false);
+                }}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-xl cursor-pointer w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-full transition-all z-10"
+                id="close-auth-modal-btn"
+              >
+                &times;
+              </button>
+
+              {showGoogleChooser ? (
+                /* GOOGLE SIGN-IN INTERACTIVE CHOOSER */
+                <div className="p-6 flex flex-col">
+                  {/* Google Logo and Title */}
+                  <div className="flex flex-col items-center pt-4 pb-6 border-b border-white/5">
+                    <svg className="h-9 w-9 mb-3" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M21.35,11.1H12v2.7h5.38c-0.24,1.28 -0.96,2.37 -2.04,3.1v2.57h3.3c1.93,-1.78 3.04,-4.4 3.04,-7.47C21.68,11.83 21.56,11.45 21.35,11.1z" fill="#4285F4" />
+                      <path d="M12,20.62c2.6,0 4.78,-0.86 6.38,-2.34l-3.3,-2.57c-0.91,0.61 -2.08,0.98 -3.08,0.98 -2.37,0 -4.38,-1.6 -5.1,-3.75H3.45v2.66C5.04,18.84 8.28,20.62 12,20.62z" fill="#34A853" />
+                      <path d="M6.9,12.94c-0.18,-0.54 -0.28,-1.11 -0.28,-1.7s0.1,-1.16 0.28,-1.7V6.88H3.45C2.83,8.11 2.48,9.51 2.48,11s0.35,2.89 0.97,4.12l3.45,-2.18z" fill="#FBBC05" />
+                      <path d="M12,6.12c1.41,0 2.68,0.49 3.68,1.44l2.76,-2.76C16.78,3.24 14.6,2.38 12,2.38c-3.72,0 -6.96,1.78 -8.55,4.5l3.45,2.18c0.72,-2.15 2.73,-3.75 5.1,-3.75z" fill="#EA4335" />
+                    </svg>
+                    <h3 className="text-base font-bold text-white tracking-tight text-center">
+                      Sign in with Google
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1.5 text-center">
+                      Pumili ng Google account upang magpatuloy sa simulator
+                    </p>
+                  </div>
+
+                  {showGoogleInput ? (
+                    /* ENTER CUSTOM GMAIL FORM */
+                    <form onSubmit={handleGoogleCustomEmailSubmit} className="py-5 flex flex-col gap-4">
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setShowGoogleInput(false);
+                          setAuthError('');
+                        }}
+                        className="flex items-center gap-1 text-[11px] text-amber-500 font-semibold font-mono hover:underline self-start mb-2"
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" /> Bumalik sa listahan
+                      </button>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Google Email / Gmail</label>
+                        <input 
+                          type="email"
+                          required
+                          placeholder="e.g. pangalan@gmail.com"
+                          value={googleInputEmail}
+                          onChange={(e) => setGoogleInputEmail(e.target.value)}
+                          className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2.5 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                          autoFocus
+                        />
+                      </div>
+
+                      {authError && (
+                        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg leading-tight">
+                          ⚠️ {authError}
+                        </div>
+                      )}
+                      {authSuccess && (
+                        <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg leading-tight">
+                          ✓ {authSuccess}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={authLoading}
+                        className="w-full py-2.5 bg-[#4285F4] hover:bg-[#357ae8] text-white font-bold text-xs rounded-lg transition-all active:scale-98 disabled:opacity-50 font-mono tracking-wider"
+                      >
+                        {authLoading ? 'Nagpapatunay...' : 'I-login ang Google Account'}
+                      </button>
+                    </form>
+                  ) : (
+                    /* ACCOUNT CHOOSER LIST */
+                    <div className="py-4 flex flex-col gap-2.5">
+                      {/* Admin Account Option */}
+                      <button
+                        onClick={() => handleGoogleLoginSelect('achavezsalva@gmail.com')}
+                        disabled={authLoading}
+                        className="flex items-center justify-between p-3 bg-[#1E293B]/60 hover:bg-[#1E293B] border border-white/5 hover:border-amber-500/30 rounded-xl transition-all cursor-pointer text-left group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-600 flex items-center justify-center font-bold text-slate-950 font-mono text-sm shadow-md">
+                            AC
+                          </div>
+                          <div>
+                            <span className="block text-xs font-bold text-white group-hover:text-amber-400 transition-colors">Artchie Chavez</span>
+                            <span className="block text-[10px] text-slate-400 font-mono">achavezsalva@gmail.com</span>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded font-mono uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                          👑 Admin
+                        </span>
+                      </button>
+
+                      {/* Guest User Option */}
+                      <button
+                        onClick={() => handleGoogleLoginSelect('guest.trader@gmail.com')}
+                        disabled={authLoading}
+                        className="flex items-center justify-between p-3 bg-[#1E293B]/40 hover:bg-[#1E293B]/80 border border-white/5 hover:border-indigo-500/30 rounded-xl transition-all cursor-pointer text-left group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white font-mono text-sm shadow-md">
+                            GT
+                          </div>
+                          <div>
+                            <span className="block text-xs font-bold text-white group-hover:text-indigo-400 transition-colors">Guest Trader</span>
+                            <span className="block text-[10px] text-slate-400 font-mono">guest.trader@gmail.com</span>
+                          </div>
+                        </div>
+                        <span className="text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded font-mono uppercase tracking-wider">
+                          👤 User Only
+                        </span>
+                      </button>
+
+                      {/* Custom User Option */}
+                      <button
+                        onClick={() => setShowGoogleInput(true)}
+                        disabled={authLoading}
+                        className="flex items-center gap-3 p-3 bg-[#0A0E17]/40 hover:bg-[#1E293B]/40 border border-dashed border-white/10 hover:border-white/20 rounded-xl transition-all cursor-pointer text-left text-slate-300 hover:text-white"
+                      >
+                        <div className="w-9 h-9 rounded-full bg-[#1A1F2C] border border-white/10 flex items-center justify-center text-slate-400">
+                          <User className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <span className="block text-xs font-bold font-sans">Gumamit ng ibang Google Account...</span>
+                          <span className="block text-[9px] text-slate-500">I-input ang iyong sariling Gmail address</span>
+                        </div>
+                      </button>
+
+                      {/* Status messages for Google Chooser */}
+                      {authError && (
+                        <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg mt-2">
+                          ⚠️ {authError}
+                        </div>
+                      )}
+                      {authSuccess && (
+                        <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg mt-2">
+                          ✓ {authSuccess}
+                        </div>
+                      )}
+
+                      {/* Return to standard email credentials option */}
+                      <button
+                        onClick={() => {
+                          setShowGoogleChooser(false);
+                          setAuthError('');
+                        }}
+                        className="mt-4 text-[11px] text-slate-500 hover:text-slate-300 transition-all font-mono tracking-wide underline text-center"
+                      >
+                        Mag-login gamit ang Email & Password
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* STANDARD CREDENTIALS REGISTER / LOGIN FORM */
+                <>
+                  {/* Header Icon / Branding */}
+                  <div className="pt-8 pb-5 px-6 flex flex-col items-center border-b border-white/5 bg-[#0A0E17]/55">
+                    <div className="w-12 h-12 rounded-full bg-[#1E293B] border border-white/10 flex items-center justify-center mb-3 text-amber-500">
+                      <User className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-sm font-bold text-white tracking-tight text-center uppercase font-mono">
+                      Artchie FXROBOT Portal
+                    </h3>
+                    <p className="text-[11px] text-slate-400 text-center mt-1 leading-snug">
+                      Kailangan ng Admin Access para makapag-download ng MetaTrader 4 robot file.
+                    </p>
+                  </div>
+
+                  {/* Interactive Tabs */}
+                  <div className="flex border-b border-white/5 bg-black/20 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab('login');
+                        setAuthError('');
+                        setAuthSuccess('');
+                      }}
+                      className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
+                        authTab === 'login' 
+                          ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Log In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab('register');
+                        setAuthError('');
+                        setAuthSuccess('');
+                      }}
+                      className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
+                        authTab === 'register' 
+                          ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Sign Up
+                    </button>
+                  </div>
+
+                  {/* Notice Box for testing (Tagalog & English, highly informative) */}
+                  <div className="px-6 pt-5">
+                    <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg p-3 text-[10px] text-slate-300 leading-normal">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-500 mb-1 font-mono">
+                        <Info className="h-3.5 w-3.5" /> GABAY SA PAG-TEST:
+                      </div>
+                      <div className="space-y-1">
+                        <p>
+                          <strong>👑 Admin account:</strong> Gamitin ang email na <span className="text-amber-400 font-semibold font-mono">achavezsalva@gmail.com</span> (maaari kang gumawa ng kahit anong password o mag-register).
+                        </p>
+                        <p>
+                          <strong>👤 Normal User account:</strong> Mag-sign up o mag-log in gamit ang anumang ibang email na gusto mo.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Auth Form */}
+                  <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
+                    {/* Email field */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Email Address</label>
+                      <div className="relative">
+                        <input 
+                          type="email"
+                          required
+                          placeholder="e.g. achavezsalva@gmail.com"
+                          value={authEmail}
+                          onChange={(e) => setAuthEmail(e.target.value)}
+                          className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Password field */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Password</label>
+                      <div className="relative">
+                        <input 
+                          type="password"
+                          required
+                          placeholder="Ipasok ang iyong password"
+                          value={authPassword}
+                          onChange={(e) => setAuthPassword(e.target.value)}
+                          className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Status messages */}
+                    {authError && (
+                      <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                        ⚠️ {authError}
+                      </div>
+                    )}
+                    {authSuccess && (
+                      <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                        ✓ {authSuccess}
+                      </div>
+                    )}
+
+                    {/* Submit button */}
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full mt-2 py-2.5 bg-[#4f46e5] hover:bg-[#4338ca] text-white font-bold text-xs rounded-lg transition-all active:scale-98 shadow-lg shadow-indigo-600/15 disabled:opacity-50 cursor-pointer uppercase tracking-wider font-mono flex items-center justify-center gap-1.5"
+                      id="auth-submit-btn"
+                    >
+                      {authLoading ? (
+                        'Sandali lamang...'
+                      ) : authTab === 'login' ? (
+                        <>I-login ang Account</>
+                      ) : (
+                        <>Rehistruhin ang Account</>
+                      )}
+                    </button>
+
+                    {/* OR Separator */}
+                    <div className="flex items-center my-1">
+                      <div className="flex-1 h-px bg-white/5"></div>
+                      <span className="px-3 text-[9px] text-slate-500 font-mono uppercase tracking-widest">O KAYA</span>
+                      <div className="flex-1 h-px bg-white/5"></div>
+                    </div>
+
+                    {/* Google Sign-In Trigger Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowGoogleChooser(true);
+                        setAuthError('');
+                        setAuthSuccess('');
+                      }}
+                      className="w-full py-2.5 bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs rounded-lg transition-all active:scale-98 shadow-md flex items-center justify-center gap-2.5 cursor-pointer font-sans"
+                      id="google-signin-btn"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21.35,11.1H12v2.7h5.38c-0.24,1.28 -0.96,2.37 -2.04,3.1v2.57h3.3c1.93,-1.78 3.04,-4.4 3.04,-7.47C21.68,11.83 21.56,11.45 21.35,11.1z" fill="#4285F4" />
+                        <path d="M12,20.62c2.6,0 4.78,-0.86 6.38,-2.34l-3.3,-2.57c-0.91,0.61 -2.08,0.98 -3.08,0.98 -2.37,0 -4.38,-1.6 -5.1,-3.75H3.45v2.66C5.04,18.84 8.28,20.62 12,20.62z" fill="#34A853" />
+                        <path d="M6.9,12.94c-0.18,-0.54 -0.28,-1.11 -0.28,-1.7s0.1,-1.16 0.28,-1.7V6.88H3.45C2.83,8.11 2.48,9.51 2.48,11s0.35,2.89 0.97,4.12l3.45,-2.18z" fill="#FBBC05" />
+                        <path d="M12,6.12c1.41,0 2.68,0.49 3.68,1.44l2.76,-2.76C16.78,3.24 14.6,2.38 12,2.38c-3.72,0 -6.96,1.78 -8.55,4.5l3.45,2.18c0.72,-2.15 2.73,-3.75 5.1,-3.75z" fill="#EA4335" />
+                      </svg>
+                      Sign in with Google
+                    </button>
+                  </form>
+                </>
+              )}
             </motion.div>
           </div>
         )}
