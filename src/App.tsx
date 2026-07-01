@@ -54,7 +54,9 @@ import { MQL4_ROBOT_SOURCE } from './robot_source';
 import { 
   registerFirebaseUser, 
   loginFirebaseUser, 
-  googleLoginFirebaseUser 
+  googleLoginFirebaseUser,
+  getFirebaseUserDoc,
+  updateUserBalanceInFirestore
 } from './firebase';
 
 export default function App() {
@@ -295,11 +297,12 @@ export default function App() {
         simTimeRef.current = initTime;
         const newCandles = initCandlesForPair(s.activePair, initTime);
 
-        s.balance = 10000;
-        s.equity = 10000;
+        const startingBalance = (currentUser && currentUser.balance !== undefined) ? currentUser.balance : 10000;
+        s.balance = startingBalance;
+        s.equity = startingBalance;
         s.floatingPL = 0;
         s.margin = 0;
-        s.freeMargin = 10000;
+        s.freeMargin = startingBalance;
         s.drawdownPercent = 0;
         s.totalClosedProfit = 0;
         s.openTrades = [];
@@ -346,6 +349,8 @@ export default function App() {
       simTimeRef.current = initTime;
       const newCandles = initCandlesForPair(prev.activePair, initTime);
 
+      const startingBalance = (currentUser && currentUser.balance !== undefined) ? currentUser.balance : 10000;
+
       return {
         ...prev,
         testPeriodEnabled,
@@ -353,11 +358,11 @@ export default function App() {
         testStartYear,
         testEndMonth,
         testEndYear,
-        balance: 10000,
-        equity: 10000,
+        balance: startingBalance,
+        equity: startingBalance,
         floatingPL: 0,
         margin: 0,
-        freeMargin: 10000,
+        freeMargin: startingBalance,
         drawdownPercent: 0,
         totalClosedProfit: 0,
         openTrades: [],
@@ -373,6 +378,31 @@ export default function App() {
       };
     });
   };
+
+  // Load and apply the user's persisted balance from Firestore when they log in
+  useEffect(() => {
+    if (currentUser && currentUser.email) {
+      const fetchAndApplyUserBalance = async () => {
+        try {
+          const userDoc = await getFirebaseUserDoc(currentUser.email);
+          if (userDoc && userDoc.balance !== undefined) {
+            // Apply this balance to the simulation
+            handleControl('set_balance', userDoc.balance);
+            
+            // Also update local storage and state if needed
+            if (currentUser.balance !== userDoc.balance) {
+              const updatedUser = { ...currentUser, balance: userDoc.balance };
+              setCurrentUser(updatedUser);
+              localStorage.setItem('artchie_user', JSON.stringify(updatedUser));
+            }
+          }
+        } catch (err) {
+          console.warn('Error fetching persisted balance from Firestore:', err);
+        }
+      };
+      fetchAndApplyUserBalance();
+    }
+  }, [currentUser?.email]);
 
   const handleManualTrade = (type: 'BUY' | 'SELL') => {
     setState(prev => {
@@ -448,12 +478,28 @@ export default function App() {
     });
   };
 
-  const handleSetBalance = (e?: FormEvent) => {
+  const handleSetBalance = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const amt = Number(customBalance);
     if (!isNaN(amt) && amt > 0) {
       handleControl('set_balance', amt);
       setIsEditingBalance(false);
+
+      if (currentUser && currentUser.email) {
+        try {
+          const res = await updateUserBalanceInFirestore(currentUser.email, amt);
+          if (res.success) {
+            console.log('Balance successfully saved to Firestore for user', currentUser.email);
+            const updatedUser = { ...currentUser, balance: amt };
+            setCurrentUser(updatedUser);
+            localStorage.setItem('artchie_user', JSON.stringify(updatedUser));
+          } else {
+            console.error('Failed to save balance to Firestore:', res.error);
+          }
+        } catch (dbErr) {
+          console.error('Firestore save error:', dbErr);
+        }
+      }
     }
   };
 
@@ -1549,7 +1595,7 @@ export default function App() {
                   I-apply at Simulan ang Backtest
                 </button>
                 <p className="text-[9px] text-slate-500 text-center font-sans">
-                  Pagkatapos i-apply, magre-reset ang account balance sa $10,000 at magsisimula ang robot sa unang araw ng napiling simula.
+                  Pagkatapos i-apply, magre-reset ang account balance sa ${(currentUser && currentUser.balance !== undefined) ? '$' + currentUser.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '$10,000.00'} at magsisimula ang robot sa unang araw ng napiling simula.
                 </p>
               </div>
             </div>

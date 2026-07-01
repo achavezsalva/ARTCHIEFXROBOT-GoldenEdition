@@ -4,7 +4,8 @@
       "fields": {
         "email": "string",
         "role": "string",
-        "createdAt": "timestamp"
+        "createdAt": "timestamp",
+        "balance": "number"
       }
     }
   },
