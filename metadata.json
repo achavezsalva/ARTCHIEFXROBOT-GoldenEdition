@@ -1,0 +1,6 @@
+{
+  "name": "Forex Grid Robot Simulator",
+  "description": "An interactive forex trading simulator and risk management dashboard featuring a real-time implementation of the Artchie FXROBOT Golden Grid EA strategy, complete with dynamic charts, custom market conditions, and an AI-powered trade analysis coach.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
