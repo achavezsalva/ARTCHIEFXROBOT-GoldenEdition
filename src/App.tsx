@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, FormEvent } from 'react';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { 
   Play, 
   Pause, 
@@ -849,6 +849,170 @@ export default function App() {
     });
   };
 
+  // TRADE ENTRY AND EXIT MARKERS WITH CSS PULSE & GROW ANIMATIONS
+  const renderTradeMarkers = () => {
+    const markers: React.ReactNode[] = [];
+
+    // Helper to map timestamp to candle index
+    const getCandleIdxForTime = (time: number) => {
+      if (candleSubset.length === 0) return -1;
+      let closestIdx = -1;
+      let minDiff = Infinity;
+      for (let i = 0; i < candleSubset.length; i++) {
+        const c = candleSubset[i];
+        const diff = Math.abs(c.time - time);
+        if (diff < 60) {
+          return i; // Same minute
+        }
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = i;
+        }
+      }
+      return minDiff < 90 ? closestIdx : -1; // Match if within 1.5 minutes
+    };
+
+    // 1. Render Active (Open) Trades Entry Markers
+    openTrades.forEach((trade) => {
+      const idx = getCandleIdxForTime(trade.openTime);
+      if (idx === -1) return;
+
+      const x = idxToX(idx);
+      const y = valToY(trade.openPrice);
+      if (y < padding || y > chartHeight - padding) return;
+
+      const isBuy = trade.type === 'BUY';
+      const color = isBuy ? '#10b981' : '#ef4444';
+      const pulseClass = isBuy ? 'animate-pulse-green' : 'animate-pulse-red';
+      const bounceClass = isBuy ? 'animate-bounce-up' : 'animate-bounce-down';
+
+      markers.push(
+        <g key={`open-trade-marker-${trade.ticket}`} className="pointer-events-none select-none">
+          {/* Pulsing glow ring underneath */}
+          <circle 
+            cx={x} 
+            cy={y} 
+            r="8" 
+            fill="none" 
+            stroke={color} 
+            className={pulseClass} 
+          />
+          {/* Inner small dot for precise price point */}
+          <circle 
+            cx={x} 
+            cy={y} 
+            r="3" 
+            fill={color} 
+          />
+          {/* Floating animated entry triangle pointing in trade direction */}
+          <g transform={`translate(${x}, ${y + (isBuy ? 16 : -16)})`}>
+            <polygon 
+              points={isBuy ? "0,-6 -6,4 6,4" : "0,6 -6,-4 6,-4"} 
+              fill={color} 
+              className={bounceClass}
+              stroke="#0A0E17"
+              strokeWidth="1"
+            />
+            {/* Small text indicator */}
+            <text
+              y={isBuy ? 12 : -10}
+              fill={color}
+              fontSize="7"
+              fontWeight="bold"
+              fontFamily="monospace"
+              textAnchor="middle"
+              className="opacity-90 uppercase tracking-tighter"
+            >
+              {trade.type}
+            </text>
+          </g>
+        </g>
+      );
+    });
+
+    // 2. Render Closed Trades Entry & Exit Markers (limit to latest 100 for perf)
+    const recentClosed = closedTrades.slice(-100);
+    recentClosed.forEach((trade) => {
+      // Entry Marker
+      const openIdx = getCandleIdxForTime(trade.openTime);
+      if (openIdx !== -1) {
+        const x = idxToX(openIdx);
+        const y = valToY(trade.openPrice);
+        if (y >= padding && y <= chartHeight - padding) {
+          const isBuy = trade.type === 'BUY';
+          const color = isBuy ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)';
+          markers.push(
+            <g key={`closed-trade-entry-${trade.ticket}`} className="pointer-events-none select-none">
+              <circle cx={x} cy={y} r="2.5" fill={color} />
+              <polygon 
+                points={isBuy ? "0,-4 -4,2 4,2" : "0,4 -4,-2 4,-2"} 
+                fill={color} 
+                transform={`translate(${x}, ${y + (isBuy ? 10 : -10)})`}
+                stroke="#0A0E17"
+                strokeWidth="0.5"
+              />
+            </g>
+          );
+        }
+      }
+
+      // Exit Marker
+      if (trade.closeTime) {
+        const closeIdx = getCandleIdxForTime(trade.closeTime);
+        if (closeIdx !== -1) {
+          const x = idxToX(closeIdx);
+          const y = valToY(trade.closePrice || trade.openPrice);
+          if (y >= padding && y <= chartHeight - padding) {
+            const isProfit = trade.profit >= 0;
+            const color = isProfit ? '#fbbf24' : '#94a3b8'; // Gold for profit, Slate for loss/breakeven
+            const pulseClass = isProfit ? 'animate-pulse-gold' : 'opacity-30';
+
+            markers.push(
+              <g key={`closed-trade-exit-${trade.ticket}`} className="pointer-events-none select-none">
+                {/* Pulsing ring for profitable exit */}
+                {isProfit && (
+                  <circle 
+                    cx={x} 
+                    cy={y} 
+                    r="8" 
+                    fill="none" 
+                    stroke={color} 
+                    className={pulseClass} 
+                  />
+                )}
+                {/* Beautiful Diamond Exit Marker */}
+                <path 
+                  d={`M ${x} ${y - 4.5} L ${x + 4.5} ${y} L ${x} ${y + 4.5} L ${x - 4.5} ${y} Z`} 
+                  fill={color} 
+                  stroke="#0A0E17"
+                  strokeWidth="1"
+                  className="animate-marker-scale"
+                  style={{ transformOrigin: `${x}px ${y}px` }}
+                />
+                {/* Mini Exit Flag */}
+                <text
+                  x={x}
+                  y={y - 8}
+                  fill={color}
+                  fontSize="7"
+                  fontWeight="bold"
+                  fontFamily="monospace"
+                  textAnchor="middle"
+                  className="opacity-90"
+                >
+                  {isProfit ? `+$${trade.profit.toFixed(1)}` : `$${trade.profit.toFixed(1)}`}
+                </text>
+              </g>
+            );
+          }
+        }
+      }
+    });
+
+    return markers;
+  };
+
+
   return (
     <div className="min-h-screen bg-[#0A0E17] text-[#E2E8F0] font-sans selection:bg-amber-500/20 selection:text-amber-300 pb-12" id="app-root">
       {/* HEADER SECTION */}
@@ -1087,6 +1251,9 @@ export default function App() {
 
                 {/* Draw Grid trade entries lines */}
                 {renderOpenTradesLines()}
+
+                {/* Draw trade entry and exit markers with animations */}
+                {renderTradeMarkers()}
               </svg>
             </div>
 
@@ -1778,60 +1945,28 @@ export default function App() {
                 <div className="bg-[#0A0E17]/60 p-2 border border-white/5 rounded relative group">
                   <div className="flex justify-between items-center">
                     <span className="text-[9px] text-slate-500 block uppercase">BALANCE</span>
-                    {!isEditingBalance && (
-                      <button 
-                        onClick={() => {
-                          setCustomBalance(balance.toString());
-                          setIsEditingBalance(true);
-                        }}
-                        className="text-amber-500/70 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5"
-                        title="Baguhin ang Balance"
-                        id="edit-balance-trigger"
-                      >
-                        <Pencil className="h-2.5 w-2.5" />
-                      </button>
-                    )}
-                  </div>
-                  {isEditingBalance ? (
-                    <form onSubmit={handleSetBalance} className="flex items-center gap-1 mt-1">
-                      <span className="text-xs text-amber-500 font-mono">$</span>
-                      <input 
-                        type="number"
-                        value={customBalance}
-                        onChange={(e) => setCustomBalance(e.target.value)}
-                        className="w-full bg-[#1E293B] text-white text-xs font-mono px-1 py-0.5 border border-amber-500/40 rounded focus:outline-none focus:border-amber-500"
-                        autoFocus
-                        step="any"
-                        id="custom-balance-input"
-                      />
-                      <button 
-                        type="submit"
-                        className="text-emerald-400 hover:text-emerald-300 p-0.5 cursor-pointer"
-                        id="save-balance-btn"
-                      >
-                        <Check className="h-3 w-3" />
-                      </button>
-                      <button 
-                        type="button" 
-                        onClick={() => setIsEditingBalance(false)}
-                        className="text-rose-400 hover:text-rose-300 p-0.5 cursor-pointer"
-                        id="cancel-balance-btn"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </form>
-                  ) : (
-                    <span 
-                      className="text-xs font-bold text-white font-mono cursor-pointer hover:text-amber-400 flex items-center gap-1"
+                    <button 
                       onClick={() => {
                         setCustomBalance(balance.toString());
                         setIsEditingBalance(true);
                       }}
-                      id="balance-display-text"
+                      className="text-amber-500/70 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5"
+                      title="Baguhin ang Balance sa pamamagitan ng Modal"
+                      id="edit-balance-trigger"
                     >
-                      $ {balance.toFixed(2)}
-                    </span>
-                  )}
+                      <Pencil className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                  <span 
+                    className="text-xs font-bold text-white font-mono cursor-pointer hover:text-amber-400 flex items-center gap-1 mt-0.5"
+                    onClick={() => {
+                      setCustomBalance(balance.toString());
+                      setIsEditingBalance(true);
+                    }}
+                    id="balance-display-text"
+                  >
+                    $ {balance.toFixed(2)}
+                  </span>
                 </div>
                 <div className="bg-[#0A0E17]/60 p-2 border border-white/5 rounded">
                   <span className="text-[9px] text-slate-500 block uppercase">EQUITY</span>
@@ -2372,6 +2507,107 @@ export default function App() {
                   </form>
                 </>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT BALANCE MODAL */}
+      <AnimatePresence>
+        {isEditingBalance && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 font-sans" id="edit-balance-modal">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#0F172A] border border-white/10 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative p-6"
+            >
+              {/* Close Button */}
+              <button 
+                onClick={() => setIsEditingBalance(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-xl cursor-pointer w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-full transition-all z-10"
+                id="close-balance-modal-btn"
+              >
+                &times;
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shadow-inner">
+                  <Coins className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white tracking-tight">
+                    Baguhin ang Balance
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    I-set ang panimulang pondo para sa simulator
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSetBalance} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 font-mono">
+                    Account Balance (USD)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-base font-semibold pointer-events-none">$</span>
+                    <input 
+                      type="number"
+                      value={customBalance}
+                      onChange={(e) => setCustomBalance(e.target.value)}
+                      placeholder="Halimbawa: 10000"
+                      className="w-full bg-[#0A0E17]/60 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-white font-mono text-base font-bold focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 transition-all"
+                      autoFocus
+                      step="any"
+                      min="1"
+                      required
+                      id="custom-balance-input"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Presets */}
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 font-mono">
+                    Quick Preset Sizes
+                  </span>
+                  <div className="grid grid-cols-4 gap-1.5 text-center font-mono">
+                    {[500, 1000, 5000, 10000, 25000, 50000, 100000].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setCustomBalance(preset.toString())}
+                        className={`text-[10px] font-semibold py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          customBalance === preset.toString()
+                            ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 shadow-sm shadow-amber-500/5'
+                            : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10 hover:border-white/10'
+                        }`}
+                      >
+                        ${preset.toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditingBalance(false)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 border border-white/5 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Kanselahin
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="flex-1 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-extrabold rounded-xl text-xs transition-all hover:brightness-105 active:scale-98 shadow-lg shadow-amber-500/10 cursor-pointer flex items-center justify-center gap-1.5"
+                    id="save-balance-btn"
+                  >
+                    <Check className="h-3.5 w-3.5 stroke-[3]" />
+                    I-save at I-apply
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
