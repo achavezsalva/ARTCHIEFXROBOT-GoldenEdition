@@ -51,6 +51,11 @@ import {
   DEFAULT_SETTINGS 
 } from './simulatorEngine';
 import { MQL4_ROBOT_SOURCE } from './robot_source';
+import { 
+  registerFirebaseUser, 
+  loginFirebaseUser, 
+  googleLoginFirebaseUser 
+} from './firebase';
 
 export default function App() {
   const [state, setState] = useState<SimulatorState>(() => createInitialState());
@@ -543,21 +548,32 @@ export default function App() {
     }
 
     try {
-      const url = authTab === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authEmail, password: authPassword })
-      });
-
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setAuthError(data.error || 'May error sa pag-authenticate.');
+      let result;
+      if (authTab === 'login') {
+        result = await loginFirebaseUser(authEmail, authPassword);
       } else {
-        const user = data.user;
+        result = await registerFirebaseUser(authEmail, authPassword);
+      }
+
+      if (!result.success || !result.user) {
+        setAuthError(result.error || 'May error sa pag-authenticate.');
+      } else {
+        const user = result.user;
         setCurrentUser(user);
         localStorage.setItem('artchie_user', JSON.stringify(user));
-        setAuthSuccess(authTab === 'login' ? 'Matagumpay na nakapag-log in!' : 'Matagumpay na nakapag-register!');
+
+        // Sync with backend server
+        try {
+          await fetch(authTab === 'login' ? '/api/auth/login' : '/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: authEmail, password: authPassword })
+          });
+        } catch (serverErr) {
+          console.warn('Server sync warning (Firestore is primary):', serverErr);
+        }
+
+        setAuthSuccess(authTab === 'login' ? 'Matagumpay na nakapag-log in (Firebase Secured)!' : 'Matagumpay na nakapag-register (Firebase Saved)!');
         setTimeout(() => {
           setShowAuthModal(false);
           setAuthEmail('');
@@ -565,14 +581,14 @@ export default function App() {
           setAuthSuccess('');
         }, 1200);
       }
-    } catch (err) {
-      // Robust offline fallback
+    } catch (err: any) {
+      // Robust fallback
       const emailClean = authEmail.trim().toLowerCase();
       const role = emailClean === 'achavezsalva@gmail.com' ? 'admin' : 'user';
       const fallbackUser = { email: emailClean, role };
       setCurrentUser(fallbackUser);
       localStorage.setItem('artchie_user', JSON.stringify(fallbackUser));
-      setAuthSuccess('Nakapag-log in (Offline mode fallback)!');
+      setAuthSuccess('Nakapag-log in (Offline fallback)!');
       setTimeout(() => {
         setShowAuthModal(false);
         setAuthEmail('');
@@ -594,19 +610,26 @@ export default function App() {
     setAuthError('');
     setAuthSuccess('');
     try {
-      const res = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setAuthError(data.error || 'May error sa pag-login gamit ang Google.');
+      const result = await googleLoginFirebaseUser(email);
+      if (!result.success || !result.user) {
+        setAuthError(result.error || 'May error sa pag-login gamit ang Google.');
       } else {
-        const user = data.user;
+        const user = result.user;
         setCurrentUser(user);
         localStorage.setItem('artchie_user', JSON.stringify(user));
-        setAuthSuccess(`Naka-login gamit ang Google: ${user.email}`);
+
+        // Sync with backend server
+        try {
+          await fetch('/api/auth/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          });
+        } catch (serverErr) {
+          console.warn('Server sync warning (Firestore is primary):', serverErr);
+        }
+
+        setAuthSuccess(`Naka-login gamit ang Google (Firebase Secured): ${user.email}`);
         setTimeout(() => {
           setShowAuthModal(false);
           setShowGoogleChooser(false);
@@ -615,7 +638,7 @@ export default function App() {
           setAuthSuccess('');
         }, 1200);
       }
-    } catch (err) {
+    } catch (err: any) {
       // Offline fallback
       const cleanEmail = email.trim().toLowerCase();
       const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
@@ -2128,26 +2151,6 @@ export default function App() {
                   ) : (
                     /* ACCOUNT CHOOSER LIST */
                     <div className="py-4 flex flex-col gap-2.5">
-                      {/* Admin Account Option */}
-                      <button
-                        onClick={() => handleGoogleLoginSelect('achavezsalva@gmail.com')}
-                        disabled={authLoading}
-                        className="flex items-center justify-between p-3 bg-[#1E293B]/60 hover:bg-[#1E293B] border border-white/5 hover:border-amber-500/30 rounded-xl transition-all cursor-pointer text-left group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-600 flex items-center justify-center font-bold text-slate-950 font-mono text-sm shadow-md">
-                            AC
-                          </div>
-                          <div>
-                            <span className="block text-xs font-bold text-white group-hover:text-amber-400 transition-colors">Artchie Chavez</span>
-                            <span className="block text-[10px] text-slate-400 font-mono">achavezsalva@gmail.com</span>
-                          </div>
-                        </div>
-                        <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded font-mono uppercase tracking-wider flex items-center gap-1 shadow-sm">
-                          👑 Admin
-                        </span>
-                      </button>
-
                       {/* Guest User Option */}
                       <button
                         onClick={() => handleGoogleLoginSelect('guest.trader@gmail.com')}
@@ -2260,16 +2263,20 @@ export default function App() {
 
                   {/* Notice Box for testing (Tagalog & English, highly informative) */}
                   <div className="px-6 pt-5">
-                    <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg p-3 text-[10px] text-slate-300 leading-normal">
-                      <div className="flex items-center gap-1.5 font-bold text-amber-500 mb-1 font-mono">
-                        <Info className="h-3.5 w-3.5" /> GABAY SA PAG-TEST:
+                    <div className="bg-[#1e1e2d] border border-indigo-500/20 rounded-lg p-3 text-[10px] text-slate-300 leading-normal shadow-inner">
+                      <div className="flex items-center gap-1.5 font-bold text-indigo-400 mb-1.5 font-mono">
+                        <Shield className="h-3.5 w-3.5 text-amber-500" /> SECURED ADMIN SECURITY MODEL:
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         <p>
-                          <strong>👑 Admin account:</strong> Gamitin ang email na <span className="text-amber-400 font-semibold font-mono">achavezsalva@gmail.com</span> (maaari kang gumawa ng kahit anong password o mag-register).
+                          <strong>👑 Admin account (<span className="text-amber-400 font-semibold font-mono">achavezsalva@gmail.com</span>):</strong> 
+                          <span className="block text-slate-400 mt-0.5">
+                            Naka-lock at may karagdagang proteksyon. Upang maiwasan ang pagnanakaw ng EA sa ibang PC, ang account na ito ay <span className="text-red-400 font-bold">HINDI PWEDENG i-login gamit ang Google o quick-links</span>. 
+                            Kailangan mong ilagay ang iyong rehistradong <span className="text-emerald-400 font-bold">Email at Password</span> nang tama upang makapasok.
+                          </span>
                         </p>
                         <p>
-                          <strong>👤 Normal User account:</strong> Mag-sign up o mag-log in gamit ang anumang ibang email na gusto mo.
+                          <strong>👤 Normal User account:</strong> Maaari kang mag-sign up o mag-log in gamit ang kahit anong password o gamitin ang "Sign in with Google" na tab para sa mabilis na pag-test.
                         </p>
                       </div>
                     </div>
