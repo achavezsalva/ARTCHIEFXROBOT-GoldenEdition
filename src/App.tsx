@@ -1271,14 +1271,7 @@ export default function App() {
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-4 text-xs font-mono">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <span className="w-2.5 h-0.5 bg-[#00F0FF] inline-block"></span> Fast MA ({currentEASettings.FastMA}): <span className="text-[#00F0FF] font-semibold">{formatPrice(candles[candles.length - 1]?.fastMa || 0)}</span>
-                </span>
-                <span className="text-slate-400 flex items-center gap-1">
-                  <span className="w-2.5 h-0.5 bg-[#FF9900] inline-block"></span> Slow MA ({currentEASettings.SlowMA}): <span className="text-[#FF9900] font-semibold">{formatPrice(candles[candles.length - 1]?.slowMa || 0)}</span>
-                </span>
-              </div>
+
             </div>
 
 
