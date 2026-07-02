@@ -2097,10 +2097,10 @@ export default function App() {
                 {/* PARAMETER SETUP BUTTON - MT4 INTEGRATED */}
                 <button 
                   onClick={() => setShowSettingsModal(true)}
-                  className="w-full mt-2 flex items-center justify-center gap-1.5 py-1.5 bg-[#2A2E45]/80 hover:bg-[#3B4161] border border-white/20 hover:border-amber-500/40 text-[11px] text-slate-200 hover:text-white rounded transition-all font-mono cursor-pointer shadow-md"
+                  className="w-full mt-2 flex items-center justify-center gap-1.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-600 font-extrabold text-[11px] rounded transition-all font-mono cursor-pointer shadow-md shadow-amber-500/20"
                   id="open-settings-modal-btn"
                 >
-                  <Settings className="h-3.5 w-3.5 text-amber-500" /> Parameter Setup
+                  <Settings className="h-3.5 w-3.5 text-slate-950" /> Parameter Setup
                 </button>
               </div>
             </div>
