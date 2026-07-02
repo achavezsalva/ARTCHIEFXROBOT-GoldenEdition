@@ -1264,7 +1264,7 @@ export default function App() {
                 <span className="p-1.5 bg-amber-500/10 text-amber-500 rounded-lg">
                   <Activity className="h-4 w-4" />
                 </span>
-                <span className="text-sm font-semibold tracking-tight text-white font-sans">{activePair} Live Trading Simulation</span>
+                <span className="text-sm font-semibold tracking-tight text-white font-sans">Live Trading Simulation</span>
                 {candles.length > 0 && (
                   <span className="text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full" id="sim-date-badge">
                     {new Date(candles[candles.length - 1].time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1278,6 +1278,12 @@ export default function App() {
 
             {/* SVG CANDLESTICK GRAPH */}
             <div className="w-full h-[520px] relative rounded-lg border border-white/5 bg-[#0A0E17] select-none overflow-hidden">
+              {/* Floating Active Pair Badge */}
+              <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-[#0F172A]/95 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 shadow-lg shadow-black/80 font-mono text-xs font-extrabold text-amber-500 tracking-wider" id="active-pair-badge">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                {activePair}
+              </div>
+
               {/* Floating Timeframe Selector */}
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-[#0F172A]/95 backdrop-blur-md p-1 rounded-lg border border-white/10 shadow-lg shadow-black/80" id="timeframe-selector">
                 {(['1M', '5M', '15M', '30M', '1H', '4H', 'D1', 'W1', 'MN'] as Timeframe[]).map(tf => (
