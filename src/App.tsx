@@ -1170,7 +1170,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0A0E17] text-[#E2E8F0] font-sans selection:bg-amber-500/20 selection:text-amber-300 pb-12" id="app-root">
       {/* HEADER SECTION */}
       <nav className="h-14 border-b border-white/10 bg-[#0F172A] flex items-center justify-between px-6 sticky top-0 z-40 shrink-0" id="main-header">
-        <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-4">
+        <div className="w-full flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <img 
               src="/img/Artchie_FXROBOTlogo.png" 
@@ -1252,7 +1252,7 @@ export default function App() {
 
 
       {/* DASHBOARD GRID */}
-      <main className="max-w-7xl mx-auto px-6 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-main">
+      <main className="max-w-full px-6 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-main">
         
         {/* LEFT COLUMN: GRAPH & TRADE EXECUTION (9 Cols) */}
         <div className="lg:col-span-9 flex flex-col gap-6" id="left-column">
