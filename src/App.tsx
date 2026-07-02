@@ -1272,7 +1272,6 @@ export default function App() {
                 )}
               </div>
               <div className="flex items-center gap-4 text-xs font-mono">
-                <span className="text-slate-400">Presyo: <span className="text-white font-semibold">{formatPrice(candles[candles.length - 1]?.close || 0)}</span></span>
                 <span className="text-slate-400 flex items-center gap-1">
                   <span className="w-2.5 h-0.5 bg-[#00F0FF] inline-block"></span> Fast MA ({currentEASettings.FastMA}): <span className="text-[#00F0FF] font-semibold">{formatPrice(candles[candles.length - 1]?.fastMa || 0)}</span>
                 </span>
@@ -1442,6 +1441,79 @@ export default function App() {
 
                 {/* Draw trade entry and exit markers with animations */}
                 {renderTradeMarkers()}
+
+                {/* Live Current Price Line with Dynamic Ticking Price Label */}
+                {candleSubset.length > 0 && (() => {
+                  const lastCandle = candleSubset[candleSubset.length - 1];
+                  const currentPrice = lastCandle.close;
+                  const y = valToY(currentPrice);
+                  const isBull = lastCandle.close >= lastCandle.open;
+                  const strokeColor = isBull ? "rgba(16, 185, 129, 0.7)" : "rgba(239, 68, 68, 0.7)";
+                  const badgeColor = isBull ? "#10b981" : "#ef4444";
+                  const lastCandleX = idxToX(candleSubset.length - 1);
+
+                  if (isNaN(y) || y < padding || y > chartHeight - padding) return null;
+
+                  return (
+                    <g key="chart-live-price-group" id="chart-live-price-group">
+                      {/* Live Dotted Horizontal Line */}
+                      <line 
+                        x1={padding} 
+                        y1={y} 
+                        x2={chartWidth - padding} 
+                        y2={y} 
+                        stroke={strokeColor} 
+                        strokeDasharray="3 3" 
+                        strokeWidth="1.2" 
+                      />
+
+                      {/* Pulsing visual node on the line intersection at the last candle */}
+                      {!isNaN(lastCandleX) && (
+                        <g>
+                          <circle
+                            cx={lastCandleX}
+                            cy={y}
+                            r="5"
+                            fill={badgeColor}
+                            opacity="0.5"
+                            className="animate-ping"
+                            style={{ transformOrigin: `${lastCandleX}px ${y}px` }}
+                          />
+                          <circle
+                            cx={lastCandleX}
+                            cy={y}
+                            r="3"
+                            fill={badgeColor}
+                          />
+                        </g>
+                      )}
+
+                      {/* Live Price Tag on the Right Edge of the Chart */}
+                      <rect 
+                        x={chartWidth - padding - 65} 
+                        y={y - 8} 
+                        width="60" 
+                        height="16" 
+                        rx="3" 
+                        fill={badgeColor}
+                        className="transition-all duration-100"
+                        id="live-price-badge-rect"
+                      />
+                      <text 
+                        x={chartWidth - padding - 35} 
+                        y={y + 3} 
+                        fill="#0b0f19" 
+                        fontSize="9.5" 
+                        fontFamily="monospace" 
+                        fontWeight="bold"
+                        textAnchor="middle"
+                        id="live-price-badge-text"
+                      >
+                        {formatPrice(currentPrice)}
+                      </text>
+                    </g>
+                  );
+                })()}
               </svg>
             </div>
 
