@@ -39,7 +39,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Candle, Trade, EASettings, SimulatorState, RiskMetrics, PAIR_CONFIGS } from './types';
+import { Candle, Trade, EASettings, SimulatorState, RiskMetrics, PAIR_CONFIGS, Timeframe, TIMEFRAME_SECONDS } from './types';
 import { 
   createInitialState, 
   tickState, 
@@ -98,7 +98,33 @@ export default function App() {
   
   // Chart Zoom Level / Visible Candles Count (Default: 50, limits: 10 to 180)
   const [visibleCandlesCount, setVisibleCandlesCount] = useState<number>(50);
+  const [chartWidth, setChartWidth] = useState<number>(1100);
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // ResizeObserver to make chart responsive and fit perfectly to parent container width
+  useEffect(() => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const parent = svgEl.parentElement;
+    if (!parent) return;
+
+    const updateWidth = () => {
+      if (parent.clientWidth > 0) {
+        setChartWidth(parent.clientWidth);
+      }
+    };
+
+    updateWidth();
+    
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+    observer.observe(parent);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   // Bind the wheel event directly using an effect so we can call preventDefault() 
   // without browser blocking due to passive event listener defaults on touch/scroll.
@@ -150,10 +176,13 @@ export default function App() {
         if (!prev.isRunning || prev.speed === 0) return prev;
 
         let s = { ...prev };
-        const secondsToAdvance = prev.speed;
+        const spacing = TIMEFRAME_SECONDS[prev.timeframe || '1M'];
+        const stepSize = Math.max(1, Math.floor(spacing / 60));
+        const iterations = prev.speed;
 
-        for (let t = 0; t < secondsToAdvance; t++) {
-          simTimeRef.current += 1;
+        for (let t = 0; t < iterations; t++) {
+          const prevTime = simTimeRef.current;
+          simTimeRef.current += stepSize;
 
           // Check if backtest period has ended
           if (prev.testPeriodEnabled && prev.testStartMonth && prev.testStartYear && prev.testEndMonth && prev.testEndYear) {
@@ -165,17 +194,19 @@ export default function App() {
             }
           }
 
-          // If we cross a 1-minute boundary, finalize current candle and open a new one
-          if (simTimeRef.current % 60 === 0) {
+          // If we cross a timeframe boundary, finalize current candle and open a new one
+          const crossedBoundary = Math.floor(prevTime / spacing) !== Math.floor(simTimeRef.current / spacing);
+          if (crossedBoundary) {
             const candles = [...s.candles];
             const last = candles[candles.length - 1];
 
             // Finalize indicators for the closing candle
             updateIndicatorsForLatest(candles, s.settings);
 
-            // Append a new 1M candle
+            // Append a new candle
+            const nextCandleTime = Math.floor(simTimeRef.current / spacing) * spacing;
             candles.push({
-              time: simTimeRef.current,
+              time: nextCandleTime,
               open: last.close,
               high: last.close,
               low: last.close,
@@ -191,6 +222,9 @@ export default function App() {
 
           // Execute simulation tick actions
           s = tickState(s, simTimeRef.current);
+          if (!s.isRunning) {
+            break;
+          }
         }
 
         return s;
@@ -198,7 +232,7 @@ export default function App() {
     }, 400);
 
     return () => clearInterval(interval);
-  }, [state.isRunning, state.speed]);
+  }, [state.isRunning, state.speed, state.timeframe]);
 
   const {
     balance,
@@ -277,7 +311,7 @@ export default function App() {
           ? getTimestampForMonthYear(prev.testStartMonth || 1, prev.testStartYear || 2026, false)
           : Math.floor(Date.now() / 1000) - 3600 * 24;
         simTimeRef.current = initTime;
-        const newCandles = initCandlesForPair(value, initTime);
+        const newCandles = initCandlesForPair(value, initTime, prev.timeframe || '1M');
 
         s.openTrades = [];
         s.closedTrades = closed;
@@ -290,12 +324,16 @@ export default function App() {
         s.candles = newCandles;
       } else if (action === "ea_toggle") {
         s.eaEnabled = !s.eaEnabled;
+      } else if (action === "timeframe") {
+        s.timeframe = value;
+        const newCandles = initCandlesForPair(s.activePair, simTimeRef.current, value);
+        s.candles = newCandles;
       } else if (action === "reset") {
         const initTime = s.testPeriodEnabled 
           ? getTimestampForMonthYear(s.testStartMonth || 1, s.testStartYear || 2026, false)
           : Math.floor(Date.now() / 1000) - 3600 * 24;
         simTimeRef.current = initTime;
-        const newCandles = initCandlesForPair(s.activePair, initTime);
+        const newCandles = initCandlesForPair(s.activePair, initTime, s.timeframe || '1M');
 
         const startingBalance = (currentUser && currentUser.balance !== undefined) ? currentUser.balance : 10000;
         s.balance = startingBalance;
@@ -315,14 +353,21 @@ export default function App() {
         s.candles = newCandles;
       } else if (action === "replay_step") {
         s.isRunning = false;
+        const spacing = TIMEFRAME_SECONDS[s.timeframe || '1M'];
+        const stepSize = Math.max(1, Math.floor(spacing / 60));
+
         for (let i = 0; i < 60; i++) {
-          simTimeRef.current += 1;
-          if (simTimeRef.current % 60 === 0) {
+          const prevTime = simTimeRef.current;
+          simTimeRef.current += stepSize;
+
+          const crossedBoundary = Math.floor(prevTime / spacing) !== Math.floor(simTimeRef.current / spacing);
+          if (crossedBoundary) {
             const candlesCopy = [...s.candles];
             const last = candlesCopy[candlesCopy.length - 1];
             updateIndicatorsForLatest(candlesCopy, s.settings);
+            const nextCandleTime = Math.floor(simTimeRef.current / spacing) * spacing;
             candlesCopy.push({
-              time: simTimeRef.current,
+              time: nextCandleTime,
               open: last.close,
               high: last.close,
               low: last.close,
@@ -347,7 +392,7 @@ export default function App() {
         ? getTimestampForMonthYear(testStartMonth, testStartYear, false)
         : Math.floor(Date.now() / 1000) - 3600 * 24;
       simTimeRef.current = initTime;
-      const newCandles = initCandlesForPair(prev.activePair, initTime);
+      const newCandles = initCandlesForPair(prev.activePair, initTime, prev.timeframe || '1M');
 
       const startingBalance = (currentUser && currentUser.balance !== undefined) ? currentUser.balance : 10000;
 
@@ -812,9 +857,57 @@ export default function App() {
 
   // SVG CHART DRAWING HELPERS
   const chartHeight = 520;
-  const chartWidth = 750;
   const padding = 45;
   const candleSubset = candles.slice(-visibleCandlesCount); // Dynamically slice based on zoom count
+
+  const formatCandleTime = (time: number, tf: Timeframe) => {
+    const d = new Date(time * 1000);
+    if (['1M', '5M', '15M', '30M', '1H', '4H'].includes(tf)) {
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    } else {
+      return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+    }
+  };
+
+  const renderXAxisLabels = () => {
+    if (candleSubset.length === 0) return null;
+    const labelIndices = [
+      0,
+      Math.floor(candleSubset.length * 0.25),
+      Math.floor(candleSubset.length * 0.5),
+      Math.floor(candleSubset.length * 0.75),
+      candleSubset.length - 1
+    ];
+
+    return labelIndices.map((idx, i) => {
+      const c = candleSubset[idx];
+      if (!c) return null;
+      const x = idxToX(idx);
+      const y = chartHeight - padding + 15;
+      return (
+        <g key={`x-label-${i}`}>
+          <line 
+            x1={x} 
+            y1={chartHeight - padding} 
+            x2={x} 
+            y2={chartHeight - padding + 5} 
+            stroke="rgba(255,255,255,0.15)" 
+            strokeWidth="1"
+          />
+          <text
+            x={x}
+            y={y}
+            fill="rgba(255,255,255,0.3)"
+            fontSize="9"
+            fontFamily="monospace"
+            textAnchor="middle"
+          >
+            {formatCandleTime(c.time, state.timeframe || '1M')}
+          </text>
+        </g>
+      );
+    });
+  };
 
   const getPriceRange = () => {
     if (candleSubset.length === 0) return { min: 1, max: 2 };
@@ -831,6 +924,14 @@ export default function App() {
     });
     // Add 10% padding to high/low bounds
     const diff = high - low;
+    if (diff <= 0 || !isFinite(diff) || isNaN(diff)) {
+      const fallbackLow = isFinite(low) && !isNaN(low) ? low : 1.0;
+      const fallbackHigh = isFinite(high) && !isNaN(high) ? high : 2.0;
+      return {
+        min: Math.max(0, fallbackLow - 1),
+        max: fallbackHigh + 1
+      };
+    }
     return {
       min: Math.max(0, low - diff * 0.1),
       max: high + diff * 0.1
@@ -841,17 +942,23 @@ export default function App() {
 
   // Price to Y coordinate translation
   const valToY = (val: number) => {
-    return chartHeight - padding - ((val - yMin) / (yMax - yMin)) * (chartHeight - 2 * padding);
+    if (isNaN(val) || isNaN(yMin) || isNaN(yMax) || yMax <= yMin || !isFinite(yMax) || !isFinite(yMin)) {
+      return padding;
+    }
+    const result = chartHeight - padding - ((val - yMin) / (yMax - yMin)) * (chartHeight - 2 * padding);
+    return isNaN(result) || !isFinite(result) ? padding : result;
   };
 
   // Index to X coordinate translation
   const idxToX = (idx: number) => {
-    if (candleSubset.length <= 1) return padding;
-    return padding + (idx / (candleSubset.length - 1)) * (chartWidth - 2 * padding);
+    if (candleSubset.length <= 1 || isNaN(idx)) return padding;
+    const result = padding + (idx / (candleSubset.length - 1)) * (chartWidth - 2 * padding);
+    return isNaN(result) || !isFinite(result) ? padding : result;
   };
 
   // Formatter for prices based on symbol digits
   const formatPrice = (val: number) => {
+    if (isNaN(val) || !isFinite(val)) return '0.00';
     return val.toFixed(currentPairConfig.digits);
   };
 
@@ -859,7 +966,7 @@ export default function App() {
   const renderOpenTradesLines = () => {
     return openTrades.map((trade, idx) => {
       const y = valToY(trade.openPrice);
-      if (y < padding || y > chartHeight - padding) return null;
+      if (isNaN(y) || y < padding || y > chartHeight - padding) return null;
       const strokeColor = trade.type === 'BUY' ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)';
       return (
         <g key={`chart-trade-line-${idx}`} id={`chart-trade-line-${trade.ticket}`}>
@@ -925,7 +1032,7 @@ export default function App() {
 
       const x = idxToX(idx);
       const y = valToY(trade.openPrice);
-      if (y < padding || y > chartHeight - padding) return;
+      if (isNaN(y) || isNaN(x) || y < padding || y > chartHeight - padding) return;
 
       const isBuy = trade.type === 'BUY';
       const color = isBuy ? '#10b981' : '#ef4444';
@@ -984,7 +1091,7 @@ export default function App() {
       if (openIdx !== -1) {
         const x = idxToX(openIdx);
         const y = valToY(trade.openPrice);
-        if (y >= padding && y <= chartHeight - padding) {
+        if (!isNaN(y) && !isNaN(x) && y >= padding && y <= chartHeight - padding) {
           const isBuy = trade.type === 'BUY';
           const color = isBuy ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)';
           markers.push(
@@ -1008,7 +1115,7 @@ export default function App() {
         if (closeIdx !== -1) {
           const x = idxToX(closeIdx);
           const y = valToY(trade.closePrice || trade.openPrice);
-          if (y >= padding && y <= chartHeight - padding) {
+          if (!isNaN(y) && !isNaN(x) && y >= padding && y <= chartHeight - padding) {
             const isProfit = trade.profit >= 0;
             const color = isProfit ? '#fbbf24' : '#94a3b8'; // Gold for profit, Slate for loss/breakeven
             const pulseClass = isProfit ? 'animate-pulse-gold' : 'opacity-30';
@@ -1158,10 +1265,6 @@ export default function App() {
                   <Activity className="h-4 w-4" />
                 </span>
                 <span className="text-sm font-semibold tracking-tight text-white font-sans">{activePair} Live Trading Simulation</span>
-                <span className="text-[11px] bg-white/5 border border-white/10 px-2 py-0.5 rounded-full text-slate-400 font-mono">1M Timeframe</span>
-                <span className="text-[11px] bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-amber-500 font-mono hidden md:inline-flex items-center gap-1" title="Gamitin ang mouse wheel (scroll) sa ibabaw ng tsart para mag-zoom">
-                  🔍 Zoom: {visibleCandlesCount} Candles (Scroll to zoom)
-                </span>
                 {candles.length > 0 && (
                   <span className="text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full" id="sim-date-badge">
                     {new Date(candles[candles.length - 1].time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1183,6 +1286,25 @@ export default function App() {
 
             {/* SVG CANDLESTICK GRAPH */}
             <div className="w-full h-[520px] relative rounded-lg border border-white/5 bg-[#0A0E17] select-none overflow-hidden">
+              {/* Floating Timeframe Selector */}
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-[#0F172A]/95 backdrop-blur-md p-1 rounded-lg border border-white/10 shadow-lg shadow-black/80" id="timeframe-selector">
+                {(['1M', '5M', '15M', '30M', '1H', '4H', 'D1', 'W1', 'MN'] as Timeframe[]).map(tf => (
+                  <button
+                    key={tf}
+                    onClick={() => handleControl('timeframe', tf)}
+                    className={`text-[10px] px-2.5 py-1 font-mono font-bold rounded-md transition-all cursor-pointer ${
+                      (state.timeframe || '1M') === tf
+                        ? 'bg-amber-500 text-slate-950 font-extrabold shadow-md shadow-amber-500/35'
+                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                    id={`tf-btn-${tf}`}
+                    title={`Palitan sa ${tf} timeframe`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+
               {/* Background Logo with 40% opacity */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0 opacity-40">
                 <img 
@@ -1203,6 +1325,7 @@ export default function App() {
                 {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
                   const val = yMin + ratio * (yMax - yMin);
                   const y = valToY(val);
+                  if (isNaN(y) || isNaN(val)) return null;
                   return (
                     <g key={`grid-${i}`}>
                       <line 
@@ -1228,6 +1351,9 @@ export default function App() {
                   );
                 })}
 
+                {/* Vertical grid lines / timestamps on X axis */}
+                {renderXAxisLabels()}
+
                 {/* Draw Candles */}
                 {candleSubset.map((c, idx) => {
                   const x = idxToX(idx);
@@ -1237,6 +1363,10 @@ export default function App() {
                   const yLow = valToY(c.low);
                   const isBull = c.close >= c.open;
                   const candleWidth = Math.max(2, (chartWidth - 2 * padding) / candleSubset.length * 0.6);
+
+                  if (isNaN(x) || isNaN(yOpen) || isNaN(yClose) || isNaN(yHigh) || isNaN(yLow)) {
+                    return null;
+                  }
 
                   return (
                     <g key={`candle-${idx}`} className="group cursor-crosshair">
@@ -1258,20 +1388,26 @@ export default function App() {
                         fill={isBull ? "#10b981" : "#ef4444"}
                         rx="1"
                       />
-                      <title>{`T: ${new Date(c.time * 1000).toLocaleTimeString()}\nO: ${formatPrice(c.open)}\nH: ${formatPrice(c.high)}\nL: ${formatPrice(c.low)}\nC: ${formatPrice(c.close)}`}</title>
+                      <title>{`T: ${formatCandleTime(c.time, state.timeframe || '1M')}\nO: ${formatPrice(c.open)}\nH: ${formatPrice(c.high)}\nL: ${formatPrice(c.low)}\nC: ${formatPrice(c.close)}`}</title>
                     </g>
                   );
                 })}
 
                 {/* Draw Fast Moving Average Line */}
                 <path
-                  d={candleSubset
-                    .map((c, idx) => {
-                      if (!c.fastMa) return '';
-                      return `${idx === 0 ? 'M' : 'L'} ${idxToX(idx)} ${valToY(c.fastMa)}`;
-                    })
-                    .join(' ')
-                  }
+                  d={(() => {
+                    const pathPoints: string[] = [];
+                    candleSubset.forEach((c, idx) => {
+                      if (c.fastMa !== undefined && !isNaN(c.fastMa)) {
+                        const x = idxToX(idx);
+                        const y = valToY(c.fastMa);
+                        if (!isNaN(x) && !isNaN(y)) {
+                          pathPoints.push(`${pathPoints.length === 0 ? 'M' : 'L'} ${x} ${y}`);
+                        }
+                      }
+                    });
+                    return pathPoints.join(' ');
+                  })()}
                   fill="none"
                   stroke="#00F0FF"
                   strokeWidth="2"
@@ -1281,13 +1417,19 @@ export default function App() {
 
                 {/* Draw Slow Moving Average Line */}
                 <path
-                  d={candleSubset
-                    .map((c, idx) => {
-                      if (!c.slowMa) return '';
-                      return `${idx === 0 ? 'M' : 'L'} ${idxToX(idx)} ${valToY(c.slowMa)}`;
-                    })
-                    .join(' ')
-                  }
+                  d={(() => {
+                    const pathPoints: string[] = [];
+                    candleSubset.forEach((c, idx) => {
+                      if (c.slowMa !== undefined && !isNaN(c.slowMa)) {
+                        const x = idxToX(idx);
+                        const y = valToY(c.slowMa);
+                        if (!isNaN(x) && !isNaN(y)) {
+                          pathPoints.push(`${pathPoints.length === 0 ? 'M' : 'L'} ${x} ${y}`);
+                        }
+                      }
+                    });
+                    return pathPoints.join(' ');
+                  })()}
                   fill="none"
                   stroke="#FF9900"
                   strokeWidth="2"

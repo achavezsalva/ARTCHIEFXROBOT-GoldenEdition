@@ -44,6 +44,20 @@ export interface EASettings {
   MagicNumber: number;
 }
 
+export type Timeframe = '1M' | '5M' | '15M' | '30M' | '1H' | '4H' | 'D1' | 'W1' | 'MN';
+
+export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
+  '1M': 60,
+  '5M': 300,
+  '15M': 900,
+  '30M': 1800,
+  '1H': 3600,
+  '4H': 14400,
+  'D1': 86400,
+  'W1': 604800,
+  'MN': 2592000,
+};
+
 export interface SimulatorState {
   balance: number;
   equity: number;
@@ -57,6 +71,7 @@ export interface SimulatorState {
   activePair: string;
   isRunning: boolean;
   speed: number; // 0 = paused, 1 = 1x, 5 = 5x, 20 = 20x, 100 = 100x
+  timeframe: Timeframe;
   marketCondition: 'normal' | 'bullish' | 'bearish' | 'volatile' | 'range';
   currentAction: string;
   breakEvenPrice: number;

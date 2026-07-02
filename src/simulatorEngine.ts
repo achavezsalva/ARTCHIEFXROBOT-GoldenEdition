@@ -3,7 +3,7 @@
  * This allows the simulation to run fully in the browser, making it fully compatible with Vercel.
  */
 
-import { Candle, Trade, EASettings, SimulatorState, PAIR_CONFIGS } from "./types";
+import { Candle, Trade, EASettings, SimulatorState, PAIR_CONFIGS, Timeframe, TIMEFRAME_SECONDS } from "./types";
 
 export const DEFAULT_SETTINGS: EASettings = {
   BaseLotSize: 0.01,
@@ -99,11 +99,12 @@ export function updateIndicatorsForLatest(candles: Candle[], settings: EASetting
   current.atr = calculateATR(candles, settings.ATR_Period, 0);
 }
 
-export function initCandlesForPair(pair: string, baseTime: number): Candle[] {
+export function initCandlesForPair(pair: string, baseTime: number, timeframe: Timeframe = '1M'): Candle[] {
   const config = PAIR_CONFIGS[pair];
   const candles: Candle[] = [];
   let currentPrice = config.basePrice;
-  let time = baseTime - 150 * 60;
+  const spacing = TIMEFRAME_SECONDS[timeframe] || 60;
+  let time = baseTime - 150 * spacing;
 
   for (let i = 0; i < 150; i++) {
     const volatility = config.pipSize * 8;
@@ -121,7 +122,7 @@ export function initCandlesForPair(pair: string, baseTime: number): Candle[] {
       close,
     });
     currentPrice = close;
-    time += 60;
+    time += spacing;
   }
 
   // Pre-calculate historical indicators
@@ -136,9 +137,9 @@ export function initCandlesForPair(pair: string, baseTime: number): Candle[] {
   return candles;
 }
 
-export function createInitialState(pair = "EURUSD"): SimulatorState {
+export function createInitialState(pair = "EURUSD", timeframe: Timeframe = '1M'): SimulatorState {
   const simTime = Math.floor(Date.now() / 1000) - 3600 * 24;
-  const candles = initCandlesForPair(pair, simTime);
+  const candles = initCandlesForPair(pair, simTime, timeframe);
 
   return {
     balance: 10000,
@@ -153,6 +154,7 @@ export function createInitialState(pair = "EURUSD"): SimulatorState {
     activePair: pair,
     isRunning: false,
     speed: 5,
+    timeframe,
     marketCondition: "normal",
     currentAction: "Naka-pause. Pindutin ang Play para magsimula.",
     breakEvenPrice: 0,
@@ -239,13 +241,15 @@ export function tickState(state: SimulatorState, simTime: number): SimulatorStat
   newState.freeMargin = freeMargin;
   newState.drawdownPercent = drawdownPercent;
 
-  // Margin call stop out check
-  if (updatedOpenTrades.length > 0 && margin > 0) {
-    const marginLevel = (equity / margin) * 100;
-    if (marginLevel <= 20 || equity <= 0) {
-      newState.currentAction = "STOP OUT HIT! Margin Level is below 20%. Closing positions.";
-      
-      // Close all
+  // Margin call stop out check or equity reaches 0
+  if (equity <= 0 || (updatedOpenTrades.length > 0 && margin > 0 && (equity / margin) * 100 <= 20)) {
+    newState.isRunning = false; // Stop the simulation & trade
+    newState.currentAction = equity <= 0
+      ? "EQUITY ZERO HIT! Naubos ang equity ($0.00). Huminto ang robot at sinara ang lahat ng posisyon."
+      : "STOP OUT HIT! Ang Margin Level ay mas mababa sa 20%. Huminto ang robot at sinara ang lahat ng posisyon.";
+    
+    // Close all open positions
+    if (updatedOpenTrades.length > 0) {
       const closedList = [...newState.closedTrades];
       let bal = newState.balance;
       updatedOpenTrades.forEach(trade => {
@@ -262,22 +266,25 @@ export function tickState(state: SimulatorState, simTime: number): SimulatorStat
           closePrice: exitPrice,
           closeTime: simTime,
           profit,
-          comment: `${trade.comment} (STOP OUT)`
+          comment: `${trade.comment} (STOP OUT - EQUITY ZERO)`
         });
         bal += profit;
       });
 
       newState.openTrades = [];
       newState.closedTrades = closedList;
-      newState.balance = bal;
-      newState.floatingPL = 0;
-      newState.equity = bal;
-      newState.margin = 0;
-      newState.freeMargin = bal;
-      newState.drawdownPercent = 0;
-      newState.candles = candles;
-      return newState;
+      newState.balance = Math.max(0, bal);
+    } else {
+      newState.balance = Math.max(0, newState.balance);
     }
+
+    newState.floatingPL = 0;
+    newState.equity = newState.balance;
+    newState.margin = 0;
+    newState.freeMargin = newState.balance;
+    newState.drawdownPercent = 0;
+    newState.candles = candles;
+    return newState;
   }
 
   // Basket calculations

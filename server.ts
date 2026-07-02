@@ -8,7 +8,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { Candle, Trade, EASettings, SimulatorState, PAIR_CONFIGS } from "./src/types.js";
+import { Candle, Trade, EASettings, SimulatorState, PAIR_CONFIGS, Timeframe, TIMEFRAME_SECONDS } from "./src/types.js";
 import { MQL4_ROBOT_SOURCE } from "./src/robot_source.js";
 
 dotenv.config();
@@ -52,6 +52,7 @@ let openTrades: Trade[] = [];
 let closedTrades: Trade[] = [];
 let isRunning = false;
 let speed = 5; // default 5x speed
+let timeframe: Timeframe = "1M";
 let marketCondition: 'normal' | 'bullish' | 'bearish' | 'volatile' | 'range' = "normal";
 let currentAction = "Naka-pause. Pindutin ang Play para magsimula.";
 let nextTicket = 10001;
@@ -598,6 +599,7 @@ app.get("/api/simulator/state", (req, res) => {
     activePair,
     isRunning,
     speed,
+    timeframe,
     marketCondition,
     currentAction,
     breakEvenPrice,
