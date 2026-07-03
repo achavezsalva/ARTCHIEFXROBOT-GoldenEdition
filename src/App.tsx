@@ -1054,8 +1054,8 @@ export default function App() {
 <body topmargin=1 marginheight=1>
 <div align=center>
 <div style="font: 20pt Times New Roman"><b>Strategy Tester Report</b></div>
-<div style="font: 16pt Times New Roman"><b>ArtchieFXRobot Trading Simulator</b></div>
-<div style="font: 10pt Times New Roman"><b>XMGlobal-Demo 2 (Build 1473)</b></div><br>
+<div style="font: 16pt Times New Roman"><b>ArtchieFXRobot - Golden Edition</b></div>
+<div style="font: 10pt Times New Roman"><b>ArtchieFX Trading Simulator</b></div><br>
 
 <table width=820 cellspacing=1 cellpadding=3 border=0>
 <tr align=left><td colspan=2>Symbol</td><td colspan=4>${formattedActivePairName}</td></tr>
