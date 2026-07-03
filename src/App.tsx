@@ -525,7 +525,7 @@ export default function App() {
 
   const handleSetBalance = async (e?: FormEvent) => {
     if (e) e.preventDefault();
-    const amt = Number(customBalance);
+    const amt = Math.round(Number(customBalance) * 100) / 100;
     if (!isNaN(amt) && amt > 0) {
       handleControl('set_balance', amt);
       setIsEditingBalance(false);
@@ -2206,7 +2206,7 @@ export default function App() {
                     <span className="text-[9px] text-slate-500 block uppercase">BALANCE</span>
                     <button 
                       onClick={() => {
-                        setCustomBalance(balance.toString());
+                        setCustomBalance(balance.toFixed(2));
                         setIsEditingBalance(true);
                       }}
                       className="text-amber-500/70 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5"
@@ -2219,7 +2219,7 @@ export default function App() {
                   <span 
                     className="text-xs font-bold text-white font-mono cursor-pointer hover:text-amber-400 flex items-center gap-1 mt-0.5"
                     onClick={() => {
-                      setCustomBalance(balance.toString());
+                      setCustomBalance(balance.toFixed(2));
                       setIsEditingBalance(true);
                     }}
                     id="balance-display-text"
@@ -2818,7 +2818,7 @@ export default function App() {
                       placeholder="Halimbawa: 10000"
                       className="w-full bg-[#0A0E17]/60 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-white font-mono text-base font-bold focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 transition-all"
                       autoFocus
-                      step="any"
+                      step="0.01"
                       min="1"
                       required
                       id="custom-balance-input"
