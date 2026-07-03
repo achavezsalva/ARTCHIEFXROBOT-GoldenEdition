@@ -962,6 +962,96 @@ export default function App() {
     if (closedTrades.length === 0) return;
 
     const metricsData = calculateDetailedMetrics();
+
+    // Generate balance curve points
+    const balancePoints: number[] = [metricsData.initialDeposit];
+    let runningBal = metricsData.initialDeposit;
+    closedTrades.forEach(t => {
+      runningBal += t.profit;
+      balancePoints.push(runningBal);
+    });
+
+    const minBal = Math.min(...balancePoints);
+    const maxBal = Math.max(...balancePoints);
+    const balDiff = maxBal - minBal === 0 ? 1 : maxBal - minBal;
+    
+    // Give 5% padding on top and bottom
+    const yMin = minBal - balDiff * 0.05;
+    const yMax = maxBal + balDiff * 0.05;
+
+    const chartW = 820;
+    const chartH = 200;
+    const paddingLeft = 60;
+    const paddingRight = 20;
+    const paddingTop = 15;
+    const paddingBottom = 20;
+
+    const plotW = chartW - paddingLeft - paddingRight;
+    const plotH = chartH - paddingTop - paddingBottom;
+
+    // Build polyline points
+    const pts: string[] = [];
+    balancePoints.forEach((bal, idx) => {
+      const x = paddingLeft + (idx / (balancePoints.length - 1 || 1)) * plotW;
+      const y = (chartH - paddingBottom) - ((bal - yMin) / (yMax - yMin)) * plotH;
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    });
+
+    // Create a shadow/area path that goes down to the bottom of the plot area
+    const areaPts = [
+      `${paddingLeft.toFixed(1)},${(chartH - paddingBottom).toFixed(1)}`,
+      ...pts,
+      `${(paddingLeft + plotW).toFixed(1)},${(chartH - paddingBottom).toFixed(1)}`
+    ].join(' ');
+
+    const linePointsStr = pts.join(' ');
+
+    // Generate grid lines & Y labels (Balance values)
+    let yGridHtml = '';
+    const gridCountY = 4;
+    for (let i = 0; i <= gridCountY; i++) {
+      const ratio = i / gridCountY;
+      const val = yMin + ratio * (yMax - yMin);
+      const y = (chartH - paddingBottom) - ratio * plotH;
+      
+      // grid line
+      yGridHtml += `<line x1="${paddingLeft}" y1="${y}" x2="${chartW - paddingRight}" y2="${y}" stroke="#D1D5DB" stroke-width="0.5" stroke-dasharray="2,2" />\n`;
+      // label
+      yGridHtml += `<text x="${paddingLeft - 8}" y="${y + 3}" font-family="Tahoma,Arial,sans-serif" font-size="8px" fill="#4B5563" text-anchor="end">${val.toFixed(2)}</text>\n`;
+    }
+
+    // Generate grid lines & X labels (Trade index values)
+    let xGridHtml = '';
+    const gridCountX = Math.min(balancePoints.length, 10);
+    for (let i = 0; i < gridCountX; i++) {
+      const ratio = i / (gridCountX - 1 || 1);
+      const tradeIdx = Math.round(ratio * (balancePoints.length - 1));
+      const x = paddingLeft + ratio * plotW;
+      
+      // grid line
+      xGridHtml += `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${chartH - paddingBottom}" stroke="#D1D5DB" stroke-width="0.5" stroke-dasharray="2,2" />\n`;
+      // label
+      xGridHtml += `<text x="${x}" y="${chartH - paddingBottom + 13}" font-family="Tahoma,Arial,sans-serif" font-size="8px" fill="#4B5563" text-anchor="middle">${tradeIdx}</text>\n`;
+    }
+
+    const performanceGraphHtml = `
+<div style="margin: 15px 0; width: 820px; text-align: left;">
+  <svg width="820" height="200" style="background-color: #FFFFFF; border: 1px solid #777777; display: block;" xmlns="http://www.w3.org/2000/svg">
+    <!-- Grid -->
+    ${yGridHtml}
+    ${xGridHtml}
+    
+    <!-- Plot Area Border -->
+    <rect x="${paddingLeft}" y="${paddingTop}" width="${plotW}" height="${plotH}" fill="none" stroke="#777777" stroke-width="1" />
+    
+    <!-- Fill -->
+    <polygon points="${areaPts}" fill="#E1F0FF" opacity="0.5" />
+    
+    <!-- Line -->
+    <polyline points="${linePointsStr}" fill="none" stroke="#0033CC" stroke-width="1.5" />
+  </svg>
+</div>`;
+
     let tableRowsHtml = '';
     let currentSimBalance = metricsData.initialDeposit;
     let orderCounter = 0;
@@ -1076,7 +1166,7 @@ export default function App() {
 <tr align=left><td colspan=2 align=right>Maximal</td><td>consecutive profit (count of wins)</td><td align=right>${metricsData.maxConsecProfit.toFixed(2)} (${metricsData.maxConsecProfitWinsCount})</td><td>consecutive loss (count of losses)</td><td align=right>-${metricsData.maxConsecLoss.toFixed(2)} (${metricsData.maxConsecLossesCount})</td></tr>
 <tr align=left><td colspan=2 align=right>Average</td><td>consecutive wins</td><td align=right>${metricsData.avgConsecWins}</td><td>consecutive losses</td><td align=right>${metricsData.avgConsecLosses}</td></tr>
 </table>
-<br>
+${performanceGraphHtml}
 <table width=820 cellspacing=1 cellpadding=3 border=0>
 <tr bgcolor="#C0C0C0" align=right><td>#</td><td>Time</td><td>Type</td><td>Order</td><td>Size</td><td>Price</td><td>S / L</td><td>T / P</td><td>Profit</td><td>Balance</td></tr>
 ${tableRowsHtml}
