@@ -273,9 +273,9 @@ export function tickState(state: SimulatorState, simTime: number): SimulatorStat
 
       newState.openTrades = [];
       newState.closedTrades = closedList;
-      newState.balance = Math.max(0, bal);
+      newState.balance = Math.round(Math.max(0, bal) * 100) / 100;
     } else {
-      newState.balance = Math.max(0, newState.balance);
+      newState.balance = Math.round(Math.max(0, newState.balance) * 100) / 100;
     }
 
     newState.floatingPL = 0;
@@ -338,13 +338,14 @@ export function tickState(state: SimulatorState, simTime: number): SimulatorStat
       bal += profit;
     });
 
+    const roundedBal = Math.round(bal * 100) / 100;
     newState.openTrades = [];
     newState.closedTrades = closedList;
-    newState.balance = bal;
+    newState.balance = roundedBal;
     newState.floatingPL = 0;
-    newState.equity = bal;
+    newState.equity = roundedBal;
     newState.margin = 0;
-    newState.freeMargin = bal;
+    newState.freeMargin = roundedBal;
     newState.drawdownPercent = 0;
     newState.candles = candles;
     return newState;

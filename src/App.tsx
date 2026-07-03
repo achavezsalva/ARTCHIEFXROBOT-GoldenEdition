@@ -313,13 +313,14 @@ export default function App() {
         simTimeRef.current = initTime;
         const newCandles = initCandlesForPair(value, initTime, prev.timeframe || '1M');
 
+        const roundedBal = Math.round(bal * 100) / 100;
         s.openTrades = [];
         s.closedTrades = closed;
-        s.balance = bal;
+        s.balance = roundedBal;
         s.floatingPL = 0;
-        s.equity = bal;
+        s.equity = roundedBal;
         s.margin = 0;
-        s.freeMargin = bal;
+        s.freeMargin = roundedBal;
         s.drawdownPercent = 0;
         s.candles = newCandles;
       } else if (action === "ea_toggle") {
@@ -509,15 +510,16 @@ export default function App() {
         bal += profit;
       });
 
+      const roundedBal = Math.round(bal * 100) / 100;
       return {
         ...prev,
         openTrades: [],
         closedTrades: closed,
-        balance: bal,
+        balance: roundedBal,
         floatingPL: 0,
-        equity: bal,
+        equity: roundedBal,
         margin: 0,
-        freeMargin: bal,
+        freeMargin: roundedBal,
         drawdownPercent: 0,
       };
     });
@@ -794,61 +796,298 @@ export default function App() {
     };
   };
 
-  const metrics = calculateMetrics();
+  const calculateDetailedMetrics = () => {
+    const totalTrades = closedTrades.length;
+    const buyTradesList = closedTrades.filter(t => t.type === 'BUY');
+    const sellTradesList = closedTrades.filter(t => t.type === 'SELL');
 
-  const handleExportCSV = () => {
-    if (closedTrades.length === 0) return;
+    const longTradesCount = buyTradesList.length;
+    const longTradesWon = buyTradesList.filter(t => t.profit > 0).length;
+    const longWonPct = longTradesCount > 0 ? (longTradesWon / longTradesCount) * 100 : 0;
 
-    const metricsData = calculateMetrics();
-    const csvLines: string[] = [];
+    const shortTradesCount = sellTradesList.length;
+    const shortTradesWon = sellTradesList.filter(t => t.profit > 0).length;
+    const shortWonPct = shortTradesCount > 0 ? (shortTradesWon / shortTradesCount) * 100 : 0;
 
-    // Header metadata and performance summary log
-    csvLines.push('--- ARTCHIE FXROBOT PERFORMANCE LOG & METRICS ---');
-    csvLines.push(`Generated At,${new Date().toLocaleString()}`);
-    csvLines.push(`Simulated Symbol,${activePair}`);
-    csvLines.push(`Total Trades,${metricsData.totalTrades}`);
-    csvLines.push(`Winning Trades,${metricsData.winningTrades}`);
-    csvLines.push(`Losing Trades,${metricsData.losingTrades}`);
-    csvLines.push(`Win Rate,${metricsData.winRate.toFixed(2)}%`);
-    csvLines.push(`Profit Factor,${metricsData.profitFactor.toFixed(2)}`);
-    csvLines.push(`Average Win (USD),${metricsData.averageWin.toFixed(2)}`);
-    csvLines.push(`Average Loss (USD),${metricsData.averageLoss.toFixed(2)}`);
-    csvLines.push(`Total Net Profit (USD),${totalClosedProfit.toFixed(2)}`);
-    csvLines.push(''); // spacing
+    const winningTrades = closedTrades.filter(t => t.profit > 0);
+    const losingTrades = closedTrades.filter(t => t.profit <= 0);
 
-    // Detailed historical trades list
-    csvLines.push('--- HISTORICAL TRANSACTION LOGS ---');
-    csvLines.push('Ticket ID,Symbol,Type,Lots,Open Price,Close Price,Open Time,Close Time,Secure Profit (USD),Comment');
+    const winningTradesCount = winningTrades.length;
+    const losingTradesCount = losingTrades.length;
+
+    const profitTradesPct = totalTrades > 0 ? (winningTradesCount / totalTrades) * 100 : 0;
+    const lossTradesPct = totalTrades > 0 ? (losingTradesCount / totalTrades) * 100 : 0;
+
+    let grossProfit = 0;
+    let grossLoss = 0;
+    winningTrades.forEach(t => { grossProfit += t.profit; });
+    losingTrades.forEach(t => { grossLoss += Math.abs(t.profit); });
+
+    const totalNetProfit = grossProfit - grossLoss;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999.99 : 0;
+    const expectedPayoff = totalTrades > 0 ? totalNetProfit / totalTrades : 0;
+
+    const largestWin = winningTradesCount > 0 ? Math.max(...winningTrades.map(t => t.profit)) : 0;
+    const largestLoss = losingTradesCount > 0 ? Math.min(...losingTrades.map(t => t.profit)) : 0;
+
+    const averageWin = winningTradesCount > 0 ? grossProfit / winningTradesCount : 0;
+    const averageLoss = losingTradesCount > 0 ? grossLoss / losingTradesCount : 0;
+
+    let maxConsecWins = 0;
+    let maxConsecWinsProfit = 0;
+    let maxConsecLosses = 0;
+    let maxConsecLossesLoss = 0;
+
+    let currentConsecWins = 0;
+    let currentConsecWinsProfit = 0;
+    let currentConsecLosses = 0;
+    let currentConsecLossesLoss = 0;
+
+    let maxConsecProfit = 0;
+    let maxConsecProfitWinsCount = 0;
+    let maxConsecLoss = 0;
+    let maxConsecLossesCount = 0;
+
+    let currentConsecProfit = 0;
+    let currentConsecProfitWinsCount = 0;
+    let currentConsecLoss = 0;
+    let currentConsecLossLossesCount = 0;
 
     closedTrades.forEach(t => {
-      const openDate = new Date(t.openTime * 1000).toLocaleString('en-US', { hour12: false });
-      const closeDate = t.closeTime 
-        ? new Date(t.closeTime * 1000).toLocaleString('en-US', { hour12: false }) 
-        : 'N/A';
-      
-      const cleanComment = t.comment ? `"${t.comment.replace(/"/g, '""')}"` : '""';
-
-      const row = [
-        t.ticket,
-        t.symbol,
-        t.type,
-        t.lots.toFixed(2),
-        t.openPrice.toFixed(5),
-        t.closePrice ? t.closePrice.toFixed(5) : '0.00000',
-        `"${openDate}"`,
-        `"${closeDate}"`,
-        t.profit.toFixed(2),
-        cleanComment
-      ];
-      csvLines.push(row.join(','));
+      if (t.profit > 0) {
+        currentConsecWins++;
+        currentConsecWinsProfit += t.profit;
+        if (currentConsecWins > maxConsecWins) {
+          maxConsecWins = currentConsecWins;
+          maxConsecWinsProfit = currentConsecWinsProfit;
+        }
+        currentConsecProfit += t.profit;
+        currentConsecProfitWinsCount++;
+        if (currentConsecProfit > maxConsecProfit) {
+          maxConsecProfit = currentConsecProfit;
+          maxConsecProfitWinsCount = currentConsecProfitWinsCount;
+        }
+        currentConsecLosses = 0;
+        currentConsecLossesLoss = 0;
+        currentConsecLoss = 0;
+        currentConsecLossLossesCount = 0;
+      } else {
+        currentConsecLosses++;
+        currentConsecLossesLoss += Math.abs(t.profit);
+        if (currentConsecLosses > maxConsecLosses) {
+          maxConsecLosses = currentConsecLosses;
+          maxConsecLossesLoss = currentConsecLossesLoss;
+        }
+        currentConsecLoss += Math.abs(t.profit);
+        currentConsecLossLossesCount++;
+        if (currentConsecLoss > maxConsecLoss) {
+          maxConsecLoss = currentConsecLoss;
+          maxConsecLossesCount = currentConsecLossLossesCount;
+        }
+        currentConsecWins = 0;
+        currentConsecWinsProfit = 0;
+        currentConsecProfit = 0;
+        currentConsecProfitWinsCount = 0;
+      }
     });
 
-    const csvContent = csvLines.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let winRuns: number[] = [];
+    let lossRuns: number[] = [];
+    let currentWinRun = 0;
+    let currentLossRun = 0;
+
+    closedTrades.forEach(t => {
+      if (t.profit > 0) {
+        currentWinRun++;
+        if (currentLossRun > 0) {
+          lossRuns.push(currentLossRun);
+          currentLossRun = 0;
+        }
+      } else {
+        currentLossRun++;
+        if (currentWinRun > 0) {
+          winRuns.push(currentWinRun);
+          currentWinRun = 0;
+        }
+      }
+    });
+    if (currentWinRun > 0) winRuns.push(currentWinRun);
+    if (currentLossRun > 0) lossRuns.push(currentLossRun);
+
+    const avgConsecWins = winRuns.length > 0 ? Math.round(winRuns.reduce((a, b) => a + b, 0) / winRuns.length) : 0;
+    const avgConsecLosses = lossRuns.length > 0 ? Math.round(lossRuns.reduce((a, b) => a + b, 0) / lossRuns.length) : 0;
+
+    const initialDeposit = Math.round(Math.max(1, balance - totalClosedProfit) * 100) / 100;
+
+    const metricsData = calculateMetrics();
+
+    return {
+      totalTrades,
+      longTradesCount,
+      longWonPct,
+      shortTradesCount,
+      shortWonPct,
+      winningTradesCount,
+      profitTradesPct,
+      losingTradesCount,
+      lossTradesPct,
+      grossProfit,
+      grossLoss,
+      totalNetProfit,
+      profitFactor,
+      expectedPayoff,
+      largestWin,
+      largestLoss,
+      averageWin,
+      averageLoss,
+      maxConsecWins,
+      maxConsecWinsProfit,
+      maxConsecLosses,
+      maxConsecLossesLoss,
+      maxConsecProfit,
+      maxConsecProfitWinsCount,
+      maxConsecLoss,
+      maxConsecLossesCount,
+      avgConsecWins,
+      avgConsecLosses,
+      initialDeposit,
+      maxDrawdown: metricsData.maxDrawdown,
+      maxDrawdownPercent: metricsData.maxDrawdownPercent
+    };
+  };
+
+  const metrics = calculateMetrics();
+
+  const handleExportHTML = () => {
+    if (closedTrades.length === 0) return;
+
+    const metricsData = calculateDetailedMetrics();
+    let tableRowsHtml = '';
+    let currentSimBalance = metricsData.initialDeposit;
+    let orderCounter = 0;
+
+    closedTrades.forEach((t, index) => {
+      orderCounter++;
+      const openDateStr = new Date(t.openTime * 1000).toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).replace(/,/, '');
+
+      const closeDateStr = t.closeTime 
+        ? new Date(t.closeTime * 1000).toLocaleString('en-US', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+          }).replace(/,/, '')
+        : 'N/A';
+
+      const typeLower = t.type.toLowerCase();
+      const openRowBgColor = index % 2 === 0 ? '' : 'bgcolor="#F0F0F0"';
+      
+      tableRowsHtml += `
+<tr align=right ${openRowBgColor}>
+  <td>${2 * index + 1}</td>
+  <td class=msdate>${openDateStr}</td>
+  <td>${typeLower}</td>
+  <td>${orderCounter}</td>
+  <td class=mspt>${t.lots.toFixed(2)}</td>
+  <td style="mso-number-format:0\\.00000;">${t.openPrice.toFixed(5)}</td>
+  <td style="mso-number-format:0\\.00000;" align=right>0.00000</td>
+  <td style="mso-number-format:0\\.00000;" align=right>0.00000</td>
+  <td colspan=2></td>
+</tr>`;
+
+      currentSimBalance += t.profit;
+      const closeRowBgColor = 'bgcolor="#E0E0E0"';
+      tableRowsHtml += `
+<tr align=right ${closeRowBgColor}>
+  <td>${2 * index + 2}</td>
+  <td class=msdate>${closeDateStr}</td>
+  <td>close</td>
+  <td>${orderCounter}</td>
+  <td class=mspt>${t.lots.toFixed(2)}</td>
+  <td style="mso-number-format:0\\.00000;">${(t.closePrice || t.openPrice).toFixed(5)}</td>
+  <td style="mso-number-format:0\\.00000;" align=right>0.00000</td>
+  <td style="mso-number-format:0\\.00000;" align=right>0.00000</td>
+  <td class=mspt>${t.profit.toFixed(2)}</td>
+  <td class=mspt>${currentSimBalance.toFixed(2)}</td>
+</tr>`;
+    });
+
+    const formattedActivePairName = activePair === 'EURUSD' ? 'EURUSD (Euro vs US Dollar)' : 
+                                    activePair === 'GBPUSD' ? 'GBPUSD (Great Britain Pound vs US Dollar)' : 
+                                    activePair === 'AUDUSD' ? 'AUDUSD (Australian Dollar vs US Dollar)' : 
+                                    activePair === 'USDJPY' ? 'USDJPY (US Dollar vs Japanese Yen)' : activePair;
+
+    const timeframeStr = state.timeframe || '1M';
+
+    const htmlContent = `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+  <head>
+    <title>Strategy Tester: ArtchieFXRobot Trading Simulator</title>
+    <meta name="version" content="Build 1473">
+    <meta name="server" content="XMGlobal-Demo 2">
+    <style type="text/css" media="screen">
+    <!--
+    td { font: 8pt Tahoma,Arial; }
+    //-->
+    </style>
+    <style type="text/css" media="print">
+    <!--
+    td { font: 7pt Tahoma,Arial; }
+    //-->
+    </style>
+    <style type="text/css">
+    <!--
+    .msdate { mso-number-format:"General Date"; }
+    .mspt   { mso-number-format:\\#\\,\\#\\#0\\.00;  }
+    //-->
+    </style>
+  </head>
+<body topmargin=1 marginheight=1>
+<div align=center>
+<div style="font: 20pt Times New Roman"><b>Strategy Tester Report</b></div>
+<div style="font: 16pt Times New Roman"><b>ArtchieFXRobot Trading Simulator</b></div>
+<div style="font: 10pt Times New Roman"><b>XMGlobal-Demo 2 (Build 1473)</b></div><br>
+
+<table width=820 cellspacing=1 cellpadding=3 border=0>
+<tr align=left><td colspan=2>Symbol</td><td colspan=4>${formattedActivePairName}</td></tr>
+<tr align=left><td colspan=2>Period</td><td colspan=4>${timeframeStr}</td></tr>
+<tr align=left><td colspan=2>Model</td><td colspan=4><font color="green"><strong>Real-time Live Tick Simulation</strong></font></td></tr>
+<tr align=left><td colspan=2>Parameters</td><td colspan=4>BaseLotSize=${currentEASettings.BaseLotSize}; LotMultiplier=${currentEASettings.LotMultiplier}; MaxMartingaleSteps=${currentEASettings.MaxMartingaleSteps}; GridDistance=${currentEASettings.GridDistance}; BasketTPPips=${currentEASettings.BasketTPPips}; FastMA=${currentEASettings.FastMA}; SlowMA=${currentEASettings.SlowMA}; MagicNumber=${currentEASettings.MagicNumber}; RSIPeriod=${currentEASettings.RSIPeriod || 14}; RSI_Upper=${currentEASettings.RSI_Upper || 70}; RSI_Lower=${currentEASettings.RSI_Lower || 30}; ATR_Period=${currentEASettings.ATR_Period || 14}; </td></tr>
+<tr height=8><td colspan=6></td></tr>
+<tr align=left><td>Initial deposit</td><td align=right>${metricsData.initialDeposit.toFixed(2)}</td><td></td><td align=right></td><td>Spread</td><td align=right>Current</td></tr>
+<tr align=left><td>Total net profit</td><td align=right>${metricsData.totalNetProfit.toFixed(2)}</td><td>Gross profit</td><td align=right>${metricsData.grossProfit.toFixed(2)}</td><td>Gross loss</td><td align=right>-${metricsData.grossLoss.toFixed(2)}</td></tr>
+<tr align=left><td>Profit factor</td><td align=right>${metricsData.profitFactor.toFixed(2)}</td><td>Expected payoff</td><td align=right>${metricsData.expectedPayoff.toFixed(2)}</td><td></td><td align=right></td></tr>
+<tr align=left><td>Absolute drawdown</td><td align=right>0.00</td><td>Maximal drawdown</td><td align=right>${metricsData.maxDrawdown.toFixed(2)} (${metricsData.maxDrawdownPercent.toFixed(2)}%)</td><td>Relative drawdown</td><td align=right>${metricsData.maxDrawdownPercent.toFixed(2)}% (${metricsData.maxDrawdown.toFixed(2)})</td></tr>
+<tr height=8><td colspan=6></td></tr>
+<tr align=left><td>Total trades</td><td align=right>${metricsData.totalTrades}</td><td>Short positions (won %)</td><td align=right>${metricsData.shortTradesCount} (${metricsData.shortWonPct.toFixed(2)}%)</td><td>Long positions (won %)</td><td align=right>${metricsData.longTradesCount} (${metricsData.longWonPct.toFixed(2)}%)</td></tr>
+<tr align=left><td colspan=2 align=right></td><td>Profit trades (% of total)</td><td align=right>${metricsData.winningTradesCount} (${metricsData.profitTradesPct.toFixed(2)}%)</td><td>Loss trades (% of total)</td><td align=right>${metricsData.losingTradesCount} (${metricsData.lossTradesPct.toFixed(2)}%)</td></tr>
+<tr align=left><td colspan=2 align=right>Largest</td><td>profit trade</td><td align=right>${metricsData.largestWin.toFixed(2)}</td><td>loss trade</td><td align=right>${metricsData.largestLoss.toFixed(2)}</td></tr>
+<tr align=left><td colspan=2 align=right>Average</td><td>profit trade</td><td align=right>${metricsData.averageWin.toFixed(2)}</td><td>loss trade</td><td align=right>${metricsData.averageLoss.toFixed(2)}</td></tr>
+<tr align=left><td colspan=2 align=right>Maximum</td><td>consecutive wins (profit in money)</td><td align=right>${metricsData.maxConsecWins} (${metricsData.maxConsecWinsProfit.toFixed(2)})</td><td>consecutive losses (loss in money)</td><td align=right>${metricsData.maxConsecLosses} (-${metricsData.maxConsecLossesLoss.toFixed(2)})</td></tr>
+<tr align=left><td colspan=2 align=right>Maximal</td><td>consecutive profit (count of wins)</td><td align=right>${metricsData.maxConsecProfit.toFixed(2)} (${metricsData.maxConsecProfitWinsCount})</td><td>consecutive loss (count of losses)</td><td align=right>-${metricsData.maxConsecLoss.toFixed(2)} (${metricsData.maxConsecLossesCount})</td></tr>
+<tr align=left><td colspan=2 align=right>Average</td><td>consecutive wins</td><td align=right>${metricsData.avgConsecWins}</td><td>consecutive losses</td><td align=right>${metricsData.avgConsecLosses}</td></tr>
+</table>
+<br>
+<table width=820 cellspacing=1 cellpadding=3 border=0>
+<tr bgcolor="#C0C0C0" align=right><td>#</td><td>Time</td><td>Type</td><td>Order</td><td>Size</td><td>Price</td><td>S / L</td><td>T / P</td><td>Profit</td><td>Balance</td></tr>
+${tableRowsHtml}
+</table>
+</div></body></html>`;
+
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Artchie_FXROBOT_Kasaysayan_${activePair}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `ArtchieFXRobot_Report_${activePair}_${new Date().toISOString().split('T')[0]}.htm`;
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
@@ -2007,11 +2246,11 @@ export default function App() {
                               <p className="text-[10px] text-slate-400 mt-0.5 font-sans">Ipinapakita ang huling 20 closed positions sa ibaba. I-download ang buong report gamit ang button sa kanan.</p>
                             </div>
                             <button
-                              onClick={handleExportCSV}
+                              onClick={handleExportHTML}
                               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-slate-950 hover:bg-amber-400 text-xs font-bold rounded-lg transition-all shadow-md shadow-amber-500/10 cursor-pointer w-fit shrink-0"
                               id="export-csv-btn"
                             >
-                              <Download className="h-3.5 w-3.5" /> Export to CSV (Performance Logs)
+                              <Download className="h-3.5 w-3.5" /> Export Strategy Tester Report (HTML)
                             </button>
                           </div>
                           <div className="overflow-x-auto">
@@ -2061,43 +2300,149 @@ export default function App() {
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -5 }}
-                      className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono"
+                      className="flex flex-col gap-6"
                       key="tab-metrics"
                     >
-                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                        <span className="text-[10px] text-slate-500 block uppercase">Win Rate (Kapanalan)</span>
-                        <span className="text-xl font-bold text-emerald-400 block mt-1">{metrics.winRate.toFixed(1)}%</span>
-                        <span className="text-[10px] text-slate-600 block mt-1">Lahat ng natapos: {metrics.totalTrades}</span>
-                      </div>
-
-                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                        <span className="text-[10px] text-slate-500 block uppercase">Profit Factor</span>
-                        <span className="text-xl font-bold text-amber-500 block mt-1">{metrics.profitFactor.toFixed(2)}</span>
-                        <span className="text-[10px] text-slate-600 block mt-1">Gross Profit / Loss</span>
-                      </div>
-
-                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                        <span className="text-[10px] text-slate-500 block uppercase">Average Win Size</span>
-                        <span className="text-xl font-bold text-emerald-400 block mt-1">$ {metrics.averageWin.toFixed(2)}</span>
-                        <span className="text-[10px] text-slate-600 block mt-1">Sukat ng kita kada basket TP</span>
-                      </div>
-
-                      <div className="bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg">
-                        <span className="text-[10px] text-slate-500 block uppercase">Average Loss Size</span>
-                        <span className="text-xl font-bold text-rose-400 block mt-1">$ {metrics.averageLoss.toFixed(2)}</span>
-                        <span className="text-[10px] text-slate-600 block mt-1">Kadalasan ay stop out lamang</span>
-                      </div>
-
-                      {/* PRO TIPS FOR THE GRID BOT */}
-                      <div className="col-span-1 md:col-span-4 bg-[#0A0E17]/60 p-4 border border-white/5 rounded-lg flex items-start gap-3">
-                        <CheckCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-300 font-sans">Sikreto ng Golden Grid EA Strategy:</h4>
-                          <p className="text-[11px] text-slate-400 leading-relaxed mt-1 font-sans">
-                            Ang grid averaging ay umaasa sa panaka-nakang pag-bounces ng presyo ng forex (mean reversion). Kung walang trend-changing news, halos 100% ng basket ay magco-close sa Take Profit. Ngunit mag-ingat sa walang-humpay na trend na pwedeng sumagad sa iyong <strong className="text-rose-400">MaxMartingaleSteps (Max Safety)</strong> at humantong sa Stop Out!
-                          </p>
+                      {closedTrades.length === 0 ? (
+                        <div className="bg-[#0A0E17]/60 p-8 border border-white/5 rounded-lg text-center text-slate-500 font-mono">
+                          <CheckCircle className="h-8 w-8 mx-auto mb-2 opacity-50 text-amber-500/60" />
+                          <p className="text-xs">Walang natapos na trade upang makabuo ng Performance Report.</p>
+                          <p className="text-[10px] text-slate-600 mt-1">Patakbuhin ang robot o magsara ng trade upang simulan ang pagkalkula.</p>
                         </div>
-                      </div>
+                      ) : (() => {
+                        const dMetrics = calculateDetailedMetrics();
+                        const formattedActivePairName = activePair === 'EURUSD' ? 'EURUSD (Euro vs US Dollar)' : 
+                                                        activePair === 'GBPUSD' ? 'GBPUSD (Great Britain Pound vs US Dollar)' : 
+                                                        activePair === 'AUDUSD' ? 'AUDUSD (AUD vs US Dollar)' : 
+                                                        activePair === 'USDJPY' ? 'USDJPY (US Dollar vs Japanese Yen)' : activePair;
+                        
+                        const winningTradesPct = dMetrics.totalTrades > 0 ? (dMetrics.winningTradesCount / dMetrics.totalTrades) * 100 : 0;
+                        const losingTradesPct = dMetrics.totalTrades > 0 ? (dMetrics.losingTradesCount / dMetrics.totalTrades) * 100 : 0;
+                        
+                        const buyTrades = closedTrades.filter(t => t.type === 'BUY');
+                        const buyWon = buyTrades.filter(t => t.profit > 0).length;
+                        const buyWonPct = buyTrades.length > 0 ? (buyWon / buyTrades.length) * 100 : 0;
+
+                        const sellTrades = closedTrades.filter(t => t.type === 'SELL');
+                        const sellWon = sellTrades.filter(t => t.profit > 0).length;
+                        const sellWonPct = sellTrades.length > 0 ? (sellWon / sellTrades.length) * 100 : 0;
+
+                        return (
+                          <div className="bg-[#111827] border border-white/10 p-4 rounded-xl shadow-2xl overflow-x-auto select-text font-sans">
+                            <div className="min-w-[760px] max-w-[820px] mx-auto bg-white text-slate-900 border border-slate-300 p-6 rounded-sm shadow-md">
+                              <div className="text-center mb-6">
+                                <div className="text-[18pt] font-serif font-bold text-slate-950 leading-tight">Strategy Tester Report</div>
+                                <div className="text-[14pt] font-serif font-bold text-slate-800 leading-normal">ArtchieFXRobot Trading Simulator</div>
+                                <div className="text-[10pt] font-serif font-semibold text-slate-600 leading-normal">Live Trading Simulation Report</div>
+                              </div>
+
+                              <table className="w-full text-[10px] border-collapse font-mono" cellPadding="3">
+                                <tbody>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 w-1/4 py-1.5 text-left">Symbol</td>
+                                    <td className="w-1/4 py-1.5 text-left">{formattedActivePairName}</td>
+                                    <td className="font-bold text-slate-600 w-1/4 py-1.5 text-left">Timeframe</td>
+                                    <td className="w-1/4 py-1.5 text-left" colSpan={3}>{state.timeframe || '1M'}</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Model</td>
+                                    <td className="text-emerald-700 font-bold py-1.5 text-left" colSpan={5}>Real-time Live Tick Simulation</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Parameters</td>
+                                    <td className="text-slate-700 py-1.5 text-left" colSpan={5} style={{ wordBreak: 'break-all' }}>
+                                      BaseLotSize={currentEASettings.BaseLotSize}; LotMultiplier={currentEASettings.LotMultiplier}; MaxMartingaleSteps={currentEASettings.MaxMartingaleSteps}; GridDistance={currentEASettings.GridDistance}; BasketTPPips={currentEASettings.BasketTPPips}; FastMA={currentEASettings.FastMA}; SlowMA={currentEASettings.SlowMA}; MagicNumber={currentEASettings.MagicNumber}; RSIPeriod={currentEASettings.RSIPeriod || 14}; RSI_Upper={currentEASettings.RSI_Upper || 70}; RSI_Lower={currentEASettings.RSI_Lower || 30}; ATR_Period={currentEASettings.ATR_Period || 14};
+                                    </td>
+                                  </tr>
+                                  <tr className="h-2"><td colSpan={6}></td></tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Initial deposit</td>
+                                    <td className="text-right py-1.5">{dMetrics.initialDeposit.toFixed(2)}</td>
+                                    <td className="py-1.5"></td>
+                                    <td className="text-right py-1.5"></td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Spread</td>
+                                    <td className="text-right py-1.5">Current</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Total net profit</td>
+                                    <td className="text-right font-bold text-slate-950 py-1.5">{dMetrics.totalNetProfit.toFixed(2)}</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Gross profit</td>
+                                    <td className="text-right text-emerald-700 py-1.5">{dMetrics.grossProfit.toFixed(2)}</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Gross loss</td>
+                                    <td className="text-right text-rose-700 py-1.5">-{dMetrics.grossLoss.toFixed(2)}</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Profit factor</td>
+                                    <td className="text-right py-1.5">{dMetrics.profitFactor.toFixed(2)}</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Expected payoff</td>
+                                    <td className="text-right py-1.5">{dMetrics.expectedPayoff.toFixed(2)}</td>
+                                    <td colSpan={2}></td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Absolute drawdown</td>
+                                    <td className="text-right py-1.5">0.00</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Maximal drawdown</td>
+                                    <td className="text-right py-1.5">{dMetrics.maxDrawdown.toFixed(2)} ({dMetrics.maxDrawdownPercent.toFixed(2)}%)</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Relative drawdown</td>
+                                    <td className="text-right py-1.5">{dMetrics.maxDrawdownPercent.toFixed(2)}% ({dMetrics.maxDrawdown.toFixed(2)})</td>
+                                  </tr>
+                                  <tr className="h-2"><td colSpan={6}></td></tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Total trades</td>
+                                    <td className="text-right py-1.5">{dMetrics.totalTrades}</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Short positions (won %)</td>
+                                    <td className="text-right py-1.5">{sellTrades.length} ({sellWonPct.toFixed(2)}%)</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Long positions (won %)</td>
+                                    <td className="text-right py-1.5">{buyTrades.length} ({buyWonPct.toFixed(2)}%)</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}></td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Profit trades (% of total)</td>
+                                    <td className="text-right text-emerald-700 py-1.5">{dMetrics.winningTradesCount} ({winningTradesPct.toFixed(2)}%)</td>
+                                    <td className="font-bold text-slate-600 py-1.5 text-left">Loss trades (% of total)</td>
+                                    <td className="text-right text-rose-700 py-1.5">{dMetrics.losingTradesCount} ({losingTradesPct.toFixed(2)}%)</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}>Largest</td>
+                                    <td className="py-1.5 text-left">profit trade</td>
+                                    <td className="text-right text-emerald-700 py-1.5">{dMetrics.largestWin.toFixed(2)}</td>
+                                    <td className="py-1.5 text-left">loss trade</td>
+                                    <td className="text-right text-rose-700 py-1.5">-{dMetrics.largestLoss.toFixed(2)}</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}>Average</td>
+                                    <td className="py-1.5 text-left">profit trade</td>
+                                    <td className="text-right text-emerald-700 py-1.5">{dMetrics.averageWin.toFixed(2)}</td>
+                                    <td className="py-1.5 text-left">loss trade</td>
+                                    <td className="text-right text-rose-700 py-1.5">-{dMetrics.averageLoss.toFixed(2)}</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}>Maximum</td>
+                                    <td className="py-1.5 text-left">consecutive wins (profit)</td>
+                                    <td className="text-right py-1.5">{dMetrics.maxConsecWins} ({dMetrics.maxConsecWinsProfit.toFixed(2)})</td>
+                                    <td className="py-1.5 text-left">consecutive losses (loss)</td>
+                                    <td className="text-right py-1.5">{dMetrics.maxConsecLosses} (-{dMetrics.maxConsecLossesLoss.toFixed(2)})</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}>Maximal</td>
+                                    <td className="py-1.5 text-left">consecutive profit (count)</td>
+                                    <td className="text-right py-1.5">{dMetrics.maxConsecProfit.toFixed(2)} ({dMetrics.maxConsecProfitWinsCount})</td>
+                                    <td className="py-1.5 text-left">consecutive loss (count)</td>
+                                    <td className="text-right py-1.5">-{dMetrics.maxConsecLoss.toFixed(2)} ({dMetrics.maxConsecLossesCount})</td>
+                                  </tr>
+                                  <tr className="align-left border-b border-slate-200 text-slate-900">
+                                    <td className="font-bold text-slate-600 py-1.5 text-left" colSpan={2}>Average</td>
+                                    <td className="py-1.5 text-left">consecutive wins</td>
+                                    <td className="text-right py-1.5">{dMetrics.avgConsecWins}</td>
+                                    <td className="py-1.5 text-left">consecutive losses</td>
+                                    <td className="text-right py-1.5">{dMetrics.avgConsecLosses}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </motion.div>
                   )}
 
