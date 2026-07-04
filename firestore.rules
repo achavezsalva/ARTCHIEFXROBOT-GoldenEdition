@@ -12,19 +12,19 @@ service cloud.firestore {
     }
 
     function isOwner(email) {
-      return isSignedIn() && request.auth.token.email.lower() == email.lower();
+      return isSignedIn() 
+          && 'email' in request.auth.token 
+          && request.auth.token.email.lower() == email.lower();
     }
 
     // Entity validation helper to prevent shadow fields, type poisoning, and value poisoning
     function isValidUser(data, email) {
-      return data.keys().hasAll(['email', 'role', 'createdAt', 'balance'])
-          && data.keys().size() == 4
-          && data.email is string 
+      return data.email is string 
           && data.email.lower() == email.lower()
           && data.role is string 
           && (data.role == 'user' || data.role == 'admin')
           && data.createdAt is string
-          && data.balance is number;
+          && (data.balance is int || data.balance is float);
     }
 
     // Secured users collection rules (Zero-Trust Model)

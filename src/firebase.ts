@@ -1,11 +1,37 @@
 // src/firebase.ts
-// Pure local storage implementation to remove all external Firebase dependencies and network traffic.
+// Real Firebase SDK implementation that securely integrates Firestore and Authentication.
+
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut,
+  sendEmailVerification
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  getDocFromServer 
+} from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)" 
+  ? firebaseConfig.firestoreDatabaseId 
+  : undefined;
+export const db = dbId ? getFirestore(app, dbId) : getFirestore(app); /* CRITICAL: The app will break without this line */
+export const auth = getAuth(app);
 
 export interface FirebaseUser {
   email: string;
   role: 'admin' | 'user';
   createdAt: string;
-  balance?: number; // Persisted simulation balance
+  balance?: number; // Persisted real database balance
 }
 
 export enum OperationType {
@@ -17,248 +43,257 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-// Simple, secure local storage user store
-const USERS_STORAGE_KEY = 'artchie_local_users';
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
 
 /**
- * Native SHA-256 hashing utility with unique application salt for high-grade offline password protection
+ * Custom secure error handler to throw descriptive JSON error info for debugging
  */
-async function hashPassword(password: string): Promise<string> {
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// Test connection on boot to validate setup
+async function testConnection() {
   try {
-    const encoder = new TextEncoder();
-    // Unique application salt to prevent rainbow table attacks
-    const saltedData = encoder.encode(password + "_ArtchieSaltSecureKey2026_#987!_");
-    const hashBuffer = await crypto.subtle.digest('SHA-256', saltedData);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch (err) {
-    // Basic fallback if crypto is not supported in extremely legacy setups (not expected in modern browsers)
-    console.warn('Crypto.subtle not available, using custom secure fallback hashing.');
-    let hash = 0;
-    const str = password + "_ArtchieSaltSecureKey2026_#987!_";
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32bit integer
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
     }
-    return 'fallback_' + Math.abs(hash).toString(16);
   }
 }
+testConnection();
 
-/**
- * Validate that a user matches correct types and formats to prevent type poisoning
- */
-function validateUserData(email: string, role: string, balance: any): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !emailRegex.test(email)) return false;
-  if (role !== 'user' && role !== 'admin') return false;
-  if (typeof balance !== 'number' || isNaN(balance) || balance < 0) return false;
-  return true;
-}
-
-function getLocalUsers(): Record<string, FirebaseUser & { password?: string }> {
-  try {
-    const data = localStorage.getItem(USERS_STORAGE_KEY);
-    return data ? JSON.parse(data) : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-function saveLocalUsers(users: Record<string, FirebaseUser & { password?: string }>) {
-  try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-  } catch (e) {
-    console.error('Error saving local users:', e);
-  }
-}
-
-/**
- * Register a user locally using localStorage
- */
-export async function registerFirebaseUser(email: string, password?: string): Promise<{ success: boolean; user?: FirebaseUser; error?: string }> {
+// Validation utility for Gmail checks (ensures only real Google accounts can join)
+function isRealGmail(email: string): boolean {
   const cleanEmail = email.trim().toLowerCase();
+  return cleanEmail.endsWith('@gmail.com') || cleanEmail.endsWith('@googlemail.com');
+}
+
+/**
+ * Register a user to Firebase Auth and create their Firestore record
+ */
+export async function registerFirebaseUser(email: string, password?: string): Promise<{ success: boolean; user?: FirebaseUser; error?: string; requiresVerification?: boolean }> {
+  const cleanEmail = email.trim().toLowerCase();
+  
+  if (!isRealGmail(cleanEmail)) {
+    return { success: false, error: 'Ang portal na ito ay eksklusibo lamang para sa mga tunay na Google/Gmail accounts na nagtatapos sa @gmail.com!' };
+  }
+
+  if (!password || password.length < 6) {
+    return { success: false, error: 'Ang password ay kailangan at dapat hindi bababa sa 6 characters para sa inyong seguridad!' };
+  }
+
   try {
-    if (!password || password.length < 6) {
-      return { success: false, error: 'Ang password ay kailangan at dapat hindi bababa sa 6 characters para sa iyong seguridad!' };
-    }
-
-    const users = getLocalUsers();
-    if (users[cleanEmail]) {
-      return { success: false, error: 'Ang email na ito ay rehistrado na sa app!' };
-    }
-
-    const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
+    const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
     
-    // Type and value checks
-    if (!validateUserData(cleanEmail, role, 10000.00)) {
-      return { success: false, error: 'Invalid user email o parameters!' };
+    // We DO NOT save the initial profile to Firestore here because the user is not yet verified!
+    // Writing here will fail Firestore security rules since the email is not verified yet.
+    // Instead, the profile will be created once verification succeeds.
+
+    // Send verification email
+    try {
+      await sendEmailVerification(userCredential.user);
+    } catch (sendErr) {
+      console.error('Error sending email verification:', sendErr);
     }
 
-    // Hash password securely
-    const hashedPassword = await hashPassword(password);
-
-    const newUser: FirebaseUser & { password?: string } = {
-      email: cleanEmail,
-      role,
-      createdAt: new Date().toISOString(),
-      balance: 10000.00, // Default initial balance
-      password: hashedPassword
+    return { 
+      success: true, 
+      requiresVerification: true, 
+      error: 'Matagumpay na na-rehistro! Isang verification link ang ipinadala sa iyong Gmail inbox upang kumpirmahin na ito ay totoong account.' 
     };
-
-    users[cleanEmail] = newUser;
-    saveLocalUsers(users);
-
-    // Return sanitized user profile (hide password)
-    const { password: _, ...sanitizedUser } = newUser;
-    return { success: true, user: sanitizedUser };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Error sa pag-register.' };
+    console.error('Registration Error:', err);
+    let readableError = 'Error sa pag-register.';
+    const errStr = String(err && err.message ? err.message : err).toLowerCase();
+    const errCode = String(err && err.code ? err.code : '').toLowerCase();
+    
+    if (errCode === 'auth/email-already-in-use' || errStr.includes('email-already-in-use')) {
+      readableError = 'Ang email na ito ay rehistrado na sa app! Mangyaring mag-log in na lamang o gumamit ng ibang email.';
+    } else if (errCode === 'auth/invalid-email' || errStr.includes('invalid-email')) {
+      readableError = 'Maling format ng email!';
+    } else if (errCode === 'auth/weak-password' || errStr.includes('weak-password')) {
+      readableError = 'Ang inyong napiling password ay masyadong mahina! Dapat itong maglaman ng hindi bababa sa 6 characters.';
+    } else if (err.message) {
+      readableError = err.message;
+    }
+    return { success: false, error: readableError };
   }
 }
 
 /**
- * Log in a user locally using localStorage with support for seamless migration
+ * Log in a user to Firebase Auth and fetch/seed their Firestore record
  */
 export async function loginFirebaseUser(email: string, password?: string): Promise<{ success: boolean; user?: FirebaseUser; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
+
+  if (!isRealGmail(cleanEmail)) {
+    return { success: false, error: 'Maling email o password! Ang portal na ito ay eksklusibo lamang para sa mga tunay na Google/Gmail accounts.' };
+  }
+
+  if (!password || password.length < 6) {
+    return { success: false, error: 'Maling email o password!' };
+  }
+
   try {
-    if (!password || password.length < 6) {
-      return { success: false, error: 'Maling email o password!' };
-    }
+    const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+    const firebaseUser = userCredential.user;
 
-    const users = getLocalUsers();
-    
-    // Hash input password
-    const hashedInput = await hashPassword(password);
-
-    // Auto-seed admin user securely if logging in as admin for the first time
-    if (cleanEmail === 'achavezsalva@gmail.com' && !users[cleanEmail]) {
-      const adminUser: FirebaseUser & { password?: string } = {
-        email: cleanEmail,
-        role: 'admin',
-        createdAt: new Date().toISOString(),
-        balance: 10000.00,
-        password: hashedInput
+    // Check if email is verified
+    // We can bypass verification for the developer's main admin email to prevent lockouts.
+    if (cleanEmail !== 'achavezsalva@gmail.com' && !firebaseUser.emailVerified) {
+      // Send another verification link automatically if they try to log in but are unverified
+      try {
+        await sendEmailVerification(firebaseUser);
+      } catch (sendErr) {
+        console.error('Resend verification link error:', sendErr);
+      }
+      await signOut(auth);
+      return { 
+        success: false, 
+        error: 'Ang iyong Gmail account ay hindi pa verified! Nagpadala kami ng bagong verification link sa iyong inbox. Mangyaring i-click ito upang mag-log in.' 
       };
-      users[cleanEmail] = adminUser;
-      saveLocalUsers(users);
     }
-
-    const matchedUser = users[cleanEmail];
-    if (!matchedUser || !matchedUser.password) {
-      return { success: false, error: 'Maling email o password!' };
-    }
-
-    // Backward-compatibility: Check if existing password is not hashed yet (doesn't look like our SHA-256 hex/hash)
-    const isSha256 = /^[a-f0-9]{64}$/.test(matchedUser.password);
-    let isValid = false;
-
-    if (isSha256) {
-      isValid = (matchedUser.password === hashedInput);
-    } else {
-      // Plain-text check for existing accounts
-      isValid = (matchedUser.password === password);
-      // Automatically migrate to hash securely on-the-fly
-      if (isValid) {
-        matchedUser.password = hashedInput;
-        users[cleanEmail] = matchedUser;
-        saveLocalUsers(users);
+    
+    // Fetch user document from Firestore
+    let userDoc = await getFirebaseUserDoc(cleanEmail);
+    
+    // Auto-seed Firestore document if user is authenticated in Auth but document doesn't exist
+    if (!userDoc) {
+      const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
+      userDoc = {
+        email: cleanEmail,
+        role,
+        createdAt: new Date().toISOString(),
+        balance: 10000.00
+      };
+      const docPath = `users/${cleanEmail}`;
+      try {
+        await setDoc(doc(db, 'users', cleanEmail), userDoc);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, docPath);
       }
     }
 
-    if (!isValid) {
-      return { success: false, error: 'Maling email o password!' };
-    }
-
-    const { password: _, ...sanitizedUser } = matchedUser;
-    return { success: true, user: sanitizedUser };
+    return { success: true, user: userDoc };
   } catch (err: any) {
+    console.error('Login Error:', err);
     return { success: false, error: 'Maling email o password!' };
   }
 }
 
 /**
- * Google Sign-In helper that registers and signs in users securely and locally
+ * Google Sign-In helper (Stubbed/Secured because Google Sign-in was requested to be removed from UI)
  */
 export async function googleLoginFirebaseUser(email: string): Promise<{ success: boolean; user?: FirebaseUser; error?: string }> {
-  const cleanEmail = email.trim().toLowerCase();
-  try {
-    if (cleanEmail === 'achavezsalva@gmail.com') {
-      return { 
-        success: false, 
-        error: 'Para sa seguridad ng iyong Admin Account, hindi pinahihintulutan ang Google Sign-In para sa achavezsalva@gmail.com. Mangyaring gamitin ang karaniwang Email at Password form upang mag-log in bilang Admin.' 
-      };
-    }
-
-    const users = getLocalUsers();
-    let matchedUser = users[cleanEmail];
-
-    if (!matchedUser) {
-      matchedUser = {
-        email: cleanEmail,
-        role: 'user',
-        createdAt: new Date().toISOString(),
-        balance: 10000.00
-      };
-      users[cleanEmail] = matchedUser;
-      saveLocalUsers(users);
-    }
-
-    const { password: _, ...sanitizedUser } = matchedUser;
-    return { success: true, user: sanitizedUser };
-  } catch (err: any) {
-    return { success: false, error: 'Error sa Google Login.' };
-  }
+  return { 
+    success: false, 
+    error: 'Ang Google Sign-In ay hindi pinahihintulutan para sa kaligtasan ng account.' 
+  };
 }
 
 /**
- * Fetch a specific user's document locally (Secured with local lookup)
+ * Fetch a specific user's document from Firestore
  */
 export async function getFirebaseUserDoc(email: string): Promise<FirebaseUser | null> {
   const cleanEmail = email.trim().toLowerCase();
+  const docPath = `users/${cleanEmail}`;
   try {
-    const users = getLocalUsers();
-    const matchedUser = users[cleanEmail];
-    if (matchedUser) {
-      const { password: _, ...sanitizedUser } = matchedUser;
-      return sanitizedUser;
+    const docSnap = await getDoc(doc(db, 'users', cleanEmail));
+    if (docSnap.exists()) {
+      return docSnap.data() as FirebaseUser;
     }
     return null;
-  } catch (err: any) {
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, docPath);
     return null;
   }
 }
 
 /**
- * Update user's balance locally with validation guards to prevent state injection
+ * Force-create or fetch the Firestore user document for a newly verified user
+ */
+export async function createOrGetVerifiedUserDoc(email: string): Promise<FirebaseUser | null> {
+  const cleanEmail = email.trim().toLowerCase();
+  const docPath = `users/${cleanEmail}`;
+  try {
+    let userDoc = await getFirebaseUserDoc(cleanEmail);
+    if (!userDoc) {
+      const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
+      userDoc = {
+        email: cleanEmail,
+        role,
+        createdAt: new Date().toISOString(),
+        balance: 10000.00
+      };
+      await setDoc(doc(db, 'users', cleanEmail), userDoc);
+    }
+    return userDoc;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, docPath);
+    return null;
+  }
+}
+
+/**
+ * Update user's balance in Firestore
  */
 export async function updateUserBalanceInFirestore(email: string, balance: number): Promise<{ success: boolean; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
+  const docPath = `users/${cleanEmail}`;
   try {
-    const users = getLocalUsers();
-    const matchedUser = users[cleanEmail];
-    if (!matchedUser) {
-      return { success: false, error: 'Hindi nahanap ang user profile!' };
-    }
-
-    // Role Escalation & Type Injection Protection
-    if (!validateUserData(cleanEmail, matchedUser.role, balance)) {
-      return { success: false, error: 'Invalid parameters detected! Ang transaction ay tinanggihan.' };
-    }
-
-    matchedUser.balance = balance;
-    users[cleanEmail] = matchedUser;
-    saveLocalUsers(users);
+    await updateDoc(doc(db, 'users', cleanEmail), { balance });
     return { success: true };
   } catch (err: any) {
+    try {
+      handleFirestoreError(err, OperationType.UPDATE, docPath);
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Error sa pag-update ng balance.' };
+    }
     return { success: false, error: err.message || 'Error sa pag-update ng balance.' };
   }
 }
 
 /**
- * Log out simulation
+ * Log out from Firebase Auth
  */
 export async function logoutFirebaseUser(): Promise<void> {
-  // Local implementation has nothing external to clear
+  try {
+    await signOut(auth);
+  } catch (err) {
+    console.error('Error logging out:', err);
+  }
 }

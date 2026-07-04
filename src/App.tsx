@@ -36,7 +36,9 @@ import {
   LogIn,
   LogOut,
   Shield,
-  ArrowLeft
+  ArrowLeft,
+  Mail,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Candle, Trade, EASettings, SimulatorState, RiskMetrics, PAIR_CONFIGS, Timeframe, TIMEFRAME_SECONDS } from './types';
@@ -56,6 +58,7 @@ import {
   loginFirebaseUser, 
   googleLoginFirebaseUser,
   getFirebaseUserDoc,
+  createOrGetVerifiedUserDoc,
   updateUserBalanceInFirestore,
   logoutFirebaseUser
 } from './firebase';
@@ -88,6 +91,124 @@ export default function App() {
   const [authError, setAuthError] = useState<string>('');
   const [authSuccess, setAuthSuccess] = useState<string>('');
   const [authLoading, setAuthLoading] = useState<boolean>(false);
+
+  // Email Verification & 30-Second Countdown State
+  const [showVerificationScreen, setShowVerificationScreen] = useState<boolean>(false);
+  const [verificationCountdown, setVerificationCountdown] = useState<number>(30);
+
+  const handleVerificationTimeout = async () => {
+    setAuthLoading(true);
+    try {
+      await logoutFirebaseUser();
+    } catch (err) {
+      console.error('Logout error on verification timeout:', err);
+    }
+    setAuthLoading(false);
+    setShowVerificationScreen(false);
+    setVerificationCountdown(30);
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthError('Umalis o natapos na ang 30 segundong countdown nang hindi na-verify ang iyong email. Nag-reset ang application.');
+    setAuthSuccess('');
+    setAuthTab('login');
+  };
+
+  const handleVerificationSuccess = async () => {
+    setAuthLoading(true);
+    setAuthSuccess('✓ Matagumpay na na-verify ang iyong Google account!');
+    setAuthError('');
+    
+    try {
+      const userDoc = await createOrGetVerifiedUserDoc(authEmail);
+      if (userDoc) {
+        setCurrentUser(userDoc);
+        localStorage.setItem('artchie_user', JSON.stringify(userDoc));
+        
+        // Sync with backend server
+        try {
+          await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: authEmail, password: authPassword })
+          });
+        } catch (serverErr) {
+          console.warn('Server sync warning (Firestore is primary):', serverErr);
+        }
+      } else {
+        setAuthError('Hindi magawa ang iyong user profile sa database.');
+      }
+    } catch (err: any) {
+      console.error('Error finalizing verified registration:', err);
+      setAuthError('Error sa pag-finalize ng iyong verified account.');
+    } finally {
+      setAuthLoading(false);
+      setTimeout(() => {
+        setShowVerificationScreen(false);
+        setVerificationCountdown(30);
+        setShowAuthModal(false);
+        setAuthEmail('');
+        setAuthPassword('');
+        setAuthSuccess('');
+      }, 1500);
+    }
+  };
+
+  const handleCancelVerification = async () => {
+    setAuthLoading(true);
+    try {
+      await logoutFirebaseUser();
+    } catch (err) {
+      console.error('Error on cancel verification:', err);
+    }
+    setAuthLoading(false);
+    setShowVerificationScreen(false);
+    setVerificationCountdown(30);
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthError('Kanselado ang verification. Nag-reset ang registration process.');
+    setAuthSuccess('');
+    setAuthTab('login');
+  };
+
+  // Handle registration 30s countdown and auto email verification polling
+  useEffect(() => {
+    if (!showVerificationScreen) return;
+
+    // Start 30s countdown interval
+    const countdownInterval = setInterval(() => {
+      setVerificationCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownInterval);
+          handleVerificationTimeout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Periodically check if email is verified (every 2 seconds)
+    const verificationCheckInterval = setInterval(async () => {
+      try {
+        const { auth } = await import('./firebase');
+        if (auth.currentUser) {
+          await auth.currentUser.reload();
+          if (auth.currentUser.emailVerified) {
+            await auth.currentUser.getIdToken(true); // Force token refresh to update verified claim
+            clearInterval(countdownInterval);
+            clearInterval(verificationCheckInterval);
+            handleVerificationSuccess();
+          }
+        }
+      } catch (err) {
+        console.error('Error reloading user verification status:', err);
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(countdownInterval);
+      clearInterval(verificationCheckInterval);
+    };
+  }, [showVerificationScreen, authEmail, authPassword]);
 
   // Backtest Date Period Form State
   const [testPeriodEnabled, setTestPeriodEnabled] = useState<boolean>(false);
@@ -650,22 +771,29 @@ export default function App() {
         result = await registerFirebaseUser(authEmail, authPassword);
       }
 
-      if (!result.success || !result.user) {
+      if (!result.success) {
         setAuthError(result.error || 'May error sa pag-authenticate.');
+      } else if ('requiresVerification' in result && result.requiresVerification) {
+        // Registration succeeded, but requires email verification
+        setAuthSuccess(result.error || 'Isang verification link ang ipinadala sa iyong Gmail inbox upang kumpirmahin na ito ay totoong account.');
+        setShowVerificationScreen(true);
+        setVerificationCountdown(30);
       } else {
         const user = result.user;
-        setCurrentUser(user);
-        localStorage.setItem('artchie_user', JSON.stringify(user));
+        if (user) {
+          setCurrentUser(user);
+          localStorage.setItem('artchie_user', JSON.stringify(user));
 
-        // Sync with backend server
-        try {
-          await fetch(authTab === 'login' ? '/api/auth/login' : '/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: authEmail, password: authPassword })
-          });
-        } catch (serverErr) {
-          console.warn('Server sync warning (Firestore is primary):', serverErr);
+          // Sync with backend server
+          try {
+            await fetch(authTab === 'login' ? '/api/auth/login' : '/api/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: authEmail, password: authPassword })
+            });
+          } catch (serverErr) {
+            console.warn('Server sync warning (Firestore is primary):', serverErr);
+          }
         }
 
         setAuthSuccess(authTab === 'login' ? 'Matagumpay na nakapag-log in (Firebase Secured)!' : 'Matagumpay na nakapag-register (Firebase Saved)!');
@@ -677,19 +805,19 @@ export default function App() {
         }, 1200);
       }
     } catch (err: any) {
-      // Robust fallback
-      const emailClean = authEmail.trim().toLowerCase();
-      const role = emailClean === 'achavezsalva@gmail.com' ? 'admin' : 'user';
-      const fallbackUser = { email: emailClean, role };
-      setCurrentUser(fallbackUser);
-      localStorage.setItem('artchie_user', JSON.stringify(fallbackUser));
-      setAuthSuccess('Nakapag-log in (Offline fallback)!');
-      setTimeout(() => {
-        setShowAuthModal(false);
-        setAuthEmail('');
-        setAuthPassword('');
-        setAuthSuccess('');
-      }, 1200);
+      console.error('Authentication Error:', err);
+      let readableError = 'May error sa pag-authenticate.';
+      try {
+        const parsed = JSON.parse(err.message);
+        if (parsed && parsed.error) {
+          readableError = parsed.error;
+        } else {
+          readableError = err.message || readableError;
+        }
+      } catch {
+        readableError = err.message || readableError;
+      }
+      setAuthError(readableError);
     } finally {
       setAuthLoading(false);
     }
@@ -735,20 +863,8 @@ export default function App() {
         }, 1200);
       }
     } catch (err: any) {
-      // Offline fallback
-      const cleanEmail = email.trim().toLowerCase();
-      const role = cleanEmail === 'achavezsalva@gmail.com' ? 'admin' : 'user';
-      const user = { email: cleanEmail, role };
-      setCurrentUser(user);
-      localStorage.setItem('artchie_user', JSON.stringify(user));
-      setAuthSuccess(`Naka-login (Offline): ${user.email}`);
-      setTimeout(() => {
-        setShowAuthModal(false);
-        setShowGoogleChooser(false);
-        setShowGoogleInput(false);
-        setGoogleInputEmail('');
-        setAuthSuccess('');
-      }, 1200);
+      console.error('Google Auth submit error:', err);
+      setAuthError(err.message || 'May error sa pag-authenticate gamit ang Google.');
     } finally {
       setAuthLoading(false);
     }
@@ -2818,9 +2934,13 @@ ${tableRowsHtml}
               {/* Close Button */}
               <button 
                 onClick={() => {
-                  setShowAuthModal(false);
-                  setShowGoogleChooser(false);
-                  setShowGoogleInput(false);
+                  if (showVerificationScreen) {
+                    handleCancelVerification();
+                  } else {
+                    setShowAuthModal(false);
+                    setShowGoogleChooser(false);
+                    setShowGoogleInput(false);
+                  }
                 }}
                 className="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-xl cursor-pointer w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-full transition-all z-10"
                 id="close-auth-modal-btn"
@@ -2828,140 +2948,231 @@ ${tableRowsHtml}
                 &times;
               </button>
 
-              {/* STANDARD CREDENTIALS REGISTER / LOGIN FORM */}
-              <>
-                {/* Header Icon / Branding */}
-                <div className="pt-8 pb-5 px-6 flex flex-col items-center border-b border-white/5 bg-[#0A0E17]/55">
-                  <div className="w-12 h-12 rounded-full bg-[#1E293B] border border-white/10 flex items-center justify-center mb-3 text-amber-500">
-                    <User className="h-6 w-6" />
+              {showVerificationScreen ? (
+                /* EMAIL VERIFICATION COUNTDOWN SCREEN */
+                <div className="pt-8 pb-8 px-6 flex flex-col items-center">
+                  <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-4 text-amber-500 relative animate-pulse">
+                    <Mail className="h-8 w-8" />
+                    <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 font-mono">
+                      <Clock className="h-3 w-3" /> {verificationCountdown}s
+                    </div>
                   </div>
-                  <h3 className="text-sm font-bold text-white tracking-tight text-center uppercase font-mono">
-                    Artchie FXROBOT Portal
+
+                  <h3 className="text-sm font-extrabold text-white tracking-tight text-center uppercase font-mono mb-2">
+                    Kumpirmahin ang Gmail Account
                   </h3>
-                  <p className="text-[11px] text-slate-400 text-center mt-1 leading-snug">
-                    The New AI Powered FX Robot
-                  </p>
-                </div>
-
-                {/* Interactive Tabs */}
-                <div className="flex border-b border-white/5 bg-black/20 p-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthTab('login');
-                      setAuthError('');
-                      setAuthSuccess('');
-                    }}
-                    className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
-                      authTab === 'login' 
-                        ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthTab('register');
-                      setAuthError('');
-                      setAuthSuccess('');
-                    }}
-                    className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
-                      authTab === 'register' 
-                        ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Sign Up
-                  </button>
-                </div>
-
-                {/* Notice Box for testing (Tagalog & English, highly informative) */}
-                <div className="px-6 pt-5">
-                  <div className="bg-[#1e1e2d] border border-amber-500/20 rounded-lg p-3 text-[10px] text-slate-300 leading-normal shadow-inner animate-pulse-subtle">
-                    <div className="flex items-center gap-1.5 font-bold text-amber-500 mb-1.5 font-mono">
-                      <Shield className="h-3.5 w-3.5" /> SECURED OFFLINE MODEL & PREMIUM LICENSE:
-                    </div>
-                    <div className="space-y-2">
-                      <p>
-                        <strong>🤖 Artchie FXROBOT Premium EA:</strong>
-                        <span className="block text-slate-400 mt-0.5">
-                          Ang Artchie FXROBOT ay isang <span className="text-amber-400 font-bold">PREMIUM at PAID trading tool</span>. Hindi ito libre at kailangan itong bilhin upang magamit sa tunay na MT4 accounts para mag-trade ng totoong pera.
-                        </span>
-                      </p>
-                      
-                      <p>
-                        <strong>👤 Normal User account:</strong> 
-                        <span className="block text-slate-400 mt-0.5">
-                          Maaari kang mag-sign up o mag-log in gamit ang iyong email at password upang i-save ang iyong simulation progress offline dito sa simulator.
-                        </span>
-                      </p>
-                    </div>
+                  
+                  <div className="text-center mb-6 space-y-3">
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Nagpadala kami ng email verification link sa:
+                      <span className="block text-amber-400 font-bold font-mono mt-1 text-xs select-all">{authEmail}</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400 leading-normal">
+                      Upang matiyak na tunay ang ginamit mong Google account, mangyaring buksan ang iyong Gmail inbox at i-click ang link.
+                    </p>
                   </div>
-                </div>
 
-                {/* Auth Form */}
-                <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
-                  {/* Email field */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Email Address</label>
-                    <div className="relative">
-                      <input 
-                        type="email"
-                        required
-                        placeholder="Ipasok ang iyong E-Mail"
-                        value={authEmail}
-                        onChange={(e) => setAuthEmail(e.target.value)}
-                        className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
-                      />
+                  {/* Circular visual progress representation of 30 seconds */}
+                  <div className="w-full bg-slate-900/65 rounded-xl border border-white/5 p-4 mb-6 flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold font-mono">Countdown Reset Timer</span>
+                      <span className="text-[10px] text-slate-300 font-medium leading-tight">Mag-re-reset ang app kapag natapos ang oras.</span>
+                    </div>
+                    <div className="relative flex items-center justify-center w-12 h-12 bg-[#0A0E17] rounded-full border border-white/10">
+                      <span className="text-sm font-black font-mono text-amber-500">{verificationCountdown}</span>
                     </div>
                   </div>
 
-                  {/* Password field */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Password</label>
-                    <div className="relative">
-                      <input 
-                        type="password"
-                        required
-                        placeholder="Ipasok ang iyong password"
-                        value={authPassword}
-                        onChange={(e) => setAuthPassword(e.target.value)}
-                        className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Status messages */}
+                  {/* Status/feedback messages */}
                   {authError && (
-                    <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                    <div className="w-full text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg font-medium leading-tight mb-4">
                       ⚠️ {authError}
                     </div>
                   )}
                   {authSuccess && (
-                    <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                    <div className="w-full text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg font-medium leading-tight mb-4">
                       ✓ {authSuccess}
                     </div>
                   )}
 
-                  {/* Submit button */}
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full mt-2 py-2.5 bg-[#4f46e5] hover:bg-[#4338ca] text-white font-bold text-xs rounded-lg transition-all active:scale-98 shadow-lg shadow-indigo-600/15 disabled:opacity-50 cursor-pointer uppercase tracking-wider font-mono flex items-center justify-center gap-1.5"
-                    id="auth-submit-btn"
-                  >
-                    {authLoading ? (
-                      'Sandali lamang...'
-                    ) : authTab === 'login' ? (
-                      <>I-login ang Account</>
-                    ) : (
-                      <>E-Rehistro ang Account</>
+                  {/* Action buttons */}
+                  <div className="w-full flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        setAuthError('');
+                        try {
+                          const { auth } = await import('./firebase');
+                          if (auth.currentUser) {
+                            await auth.currentUser.reload();
+                            if (auth.currentUser.emailVerified) {
+                              await auth.currentUser.getIdToken(true); // Force token refresh
+                              handleVerificationSuccess();
+                            } else {
+                              setAuthError('Hindi pa verified! Mangyaring i-click muna ang link sa iyong email bago mag-check.');
+                            }
+                          } else {
+                            setAuthError('Nawala ang sesyon. Mangyaring sumubok muli.');
+                          }
+                        } catch (err: any) {
+                          setAuthError('Error sa pagcheck: ' + (err.message || String(err)));
+                        } finally {
+                          setAuthLoading(false);
+                        }
+                      }}
+                      disabled={authLoading}
+                      className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-105 text-slate-950 font-black text-xs rounded-lg transition-all active:scale-98 disabled:opacity-50 cursor-pointer uppercase tracking-wider font-mono flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/5"
+                    >
+                      {authLoading ? 'Sinusuri...' : 'Naka-verify na ako! (I-check)'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCancelVerification}
+                      disabled={authLoading}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white font-bold text-[10px] rounded-lg transition-all cursor-pointer uppercase tracking-wider font-mono"
+                    >
+                      Kanselahin at Bumalik
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* STANDARD CREDENTIALS REGISTER / LOGIN FORM */
+                <>
+                  {/* Header Icon / Branding */}
+                  <div className="pt-8 pb-5 px-6 flex flex-col items-center border-b border-white/5 bg-[#0A0E17]/55">
+                    <div className="w-12 h-12 rounded-full bg-[#1E293B] border border-white/10 flex items-center justify-center mb-3 text-amber-500">
+                      <User className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-sm font-bold text-white tracking-tight text-center uppercase font-mono">
+                      Artchie FXROBOT Portal
+                    </h3>
+                    <p className="text-[11px] text-slate-400 text-center mt-1 leading-snug">
+                      The New AI Powered FX Robot
+                    </p>
+                  </div>
+
+                  {/* Interactive Tabs */}
+                  <div className="flex border-b border-white/5 bg-black/20 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab('login');
+                        setAuthError('');
+                        setAuthSuccess('');
+                      }}
+                      className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
+                        authTab === 'login' 
+                          ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Log In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab('register');
+                        setAuthError('');
+                        setAuthSuccess('');
+                      }}
+                      className={`flex-1 py-2 text-xs font-mono font-bold tracking-widest uppercase transition-all rounded-lg cursor-pointer ${
+                        authTab === 'register' 
+                          ? 'bg-[#1E293B] text-amber-500 shadow-md border border-white/5' 
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Sign Up
+                    </button>
+                  </div>
+
+                  {/* Notice Box for testing (Tagalog & English, highly informative) */}
+                  <div className="px-6 pt-5">
+                    <div className="bg-[#1e1e2d] border border-amber-500/20 rounded-lg p-3 text-[10px] text-slate-300 leading-normal shadow-inner animate-pulse-subtle">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-500 mb-1.5 font-mono">
+                        <Shield className="h-3.5 w-3.5" /> SECURED OFFLINE MODEL & PREMIUM LICENSE:
+                      </div>
+                      <div className="space-y-2">
+                        <p>
+                          <strong>🤖 Artchie FXROBOT Premium EA:</strong>
+                          <span className="block text-slate-400 mt-0.5">
+                            Ang Artchie FXROBOT ay isang <span className="text-amber-400 font-bold">PREMIUM at PAID trading tool</span>. Hindi ito libre at kailangan itong bilhin upang magamit sa tunay na MT4 accounts para mag-trade ng totoong pera.
+                          </span>
+                        </p>
+                        
+                        <p>
+                          <strong>👤 Normal User account:</strong> 
+                          <span className="block text-slate-400 mt-0.5">
+                            Maaari kang mag-sign up o mag-log in gamit ang iyong email at password upang i-save ang iyong simulation progress offline dito sa simulator.
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Auth Form */}
+                  <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
+                    {/* Email field */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Email Address</label>
+                      <div className="relative">
+                        <input 
+                          type="email"
+                          required
+                          placeholder="Ipasok ang iyong E-Mail"
+                          value={authEmail}
+                          onChange={(e) => setAuthEmail(e.target.value)}
+                          className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Password field */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold font-mono">Password</label>
+                      <div className="relative">
+                        <input 
+                          type="password"
+                          required
+                          placeholder="Ipasok ang iyong password"
+                          value={authPassword}
+                          onChange={(e) => setAuthPassword(e.target.value)}
+                          className="w-full bg-[#0A0E17] border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-amber-500/50"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Status messages */}
+                    {authError && (
+                      <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                        ⚠️ {authError}
+                      </div>
                     )}
-                  </button>
-                </form>
-              </>
+                    {authSuccess && (
+                      <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg font-medium leading-tight">
+                        ✓ {authSuccess}
+                      </div>
+                    )}
+
+                    {/* Submit button */}
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full mt-2 py-2.5 bg-[#4f46e5] hover:bg-[#4338ca] text-white font-bold text-xs rounded-lg transition-all active:scale-98 shadow-lg shadow-indigo-600/15 disabled:opacity-50 cursor-pointer uppercase tracking-wider font-mono flex items-center justify-center gap-1.5"
+                      id="auth-submit-btn"
+                    >
+                      {authLoading ? (
+                        'Sandali lamang...'
+                      ) : authTab === 'login' ? (
+                        <>I-login ang Account</>
+                      ) : (
+                        <>E-Rehistro ang Account</>
+                      )}
+                    </button>
+                  </form>
+                </>
+              )}
             </motion.div>
           </div>
         )}
