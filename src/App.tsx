@@ -1922,7 +1922,7 @@ ${tableRowsHtml}
                   title="I-play ang simulation"
                 >
                   <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>PLAY</span>
+                  <span>START</span>
                 </button>
 
                 <div className="h-4 w-px bg-white/10"></div>
