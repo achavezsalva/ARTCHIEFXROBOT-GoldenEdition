@@ -147,6 +147,8 @@ export async function registerFirebaseUser(email: string, password?: string): Pr
       readableError = 'Maling format ng email!';
     } else if (errCode === 'auth/weak-password' || errStr.includes('weak-password')) {
       readableError = 'Ang inyong napiling password ay masyadong mahina! Dapat itong maglaman ng hindi bababa sa 6 characters.';
+    } else if (errCode === 'auth/too-many-requests' || errStr.includes('too-many-requests')) {
+      readableError = 'Masyadong maraming request sa maikling panahon! Mangyaring maghintay muna bago sumubok muli.';
     } else if (err.message) {
       readableError = err.message;
     }
@@ -176,15 +178,21 @@ export async function loginFirebaseUser(email: string, password?: string): Promi
     // We can bypass verification for the developer's main admin email to prevent lockouts.
     if (cleanEmail !== 'achavezsalva@gmail.com' && !firebaseUser.emailVerified) {
       // Send another verification link automatically if they try to log in but are unverified
+      let resendError = '';
       try {
         await sendEmailVerification(firebaseUser);
-      } catch (sendErr) {
+      } catch (sendErr: any) {
         console.error('Resend verification link error:', sendErr);
+        const sendErrCode = String(sendErr && sendErr.code ? sendErr.code : '').toLowerCase();
+        const sendErrStr = String(sendErr && sendErr.message ? sendErr.message : sendErr).toLowerCase();
+        if (sendErrCode === 'auth/too-many-requests' || sendErrStr.includes('too-many-requests')) {
+          resendError = ' (Paunawa: Hindi maipadala ang panibagong link dahil sa sunod-sunod na request. Mangyaring maghintay muna ng kaunti bago sumubok muli.)';
+        }
       }
       await signOut(auth);
       return { 
         success: false, 
-        error: 'Ang iyong Gmail account ay hindi pa verified! Nagpadala kami ng bagong verification link sa iyong inbox. Mangyaring i-click ito upang mag-log in.' 
+        error: `Ang iyong Gmail account ay hindi pa verified! Nagpadala kami ng verification link sa iyong inbox. Mangyaring i-click ito upang mag-log in.${resendError}` 
       };
     }
     
@@ -211,7 +219,19 @@ export async function loginFirebaseUser(email: string, password?: string): Promi
     return { success: true, user: userDoc };
   } catch (err: any) {
     console.error('Login Error:', err);
-    return { success: false, error: 'Maling email o password!' };
+    const errCode = String(err && err.code ? err.code : '').toLowerCase();
+    const errStr = String(err && err.message ? err.message : err).toLowerCase();
+    
+    if (errCode === 'auth/too-many-requests' || errStr.includes('too-many-requests')) {
+      return { success: false, error: 'Masyadong maraming maling subok! Mangyaring maghintay muna ng ilang sandali bago sumubok muli.' };
+    }
+    if (errCode === 'auth/user-not-found' || errStr.includes('user-not-found') || 
+        errCode === 'auth/wrong-password' || errStr.includes('wrong-password') ||
+        errCode === 'auth/invalid-credential' || errStr.includes('invalid-credential')) {
+      return { success: false, error: 'Maling email o password!' };
+    }
+    
+    return { success: false, error: err.message || 'Maling email o password!' };
   }
 }
 
