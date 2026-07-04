@@ -1528,10 +1528,10 @@ ${tableRowsHtml}
               </div>
               <div className="h-8 w-px bg-white/10"></div>
               <button 
-                onClick={() => handleControl('reset')}
+                onClick={() => { setCustomBalance(state.balance.toFixed(2)); setIsEditingBalance(true); }}
                 className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-extrabold rounded text-[11px] transition-all uppercase tracking-tight flex items-center gap-1 active:scale-95 cursor-pointer"
               >
-                <RotateCcw className="h-3 w-3" /> Reset Balance
+                <Pencil className="h-3 w-3" /> Edit Balance
               </button>
               <div className="h-8 w-px bg-white/10"></div>
             </div>
@@ -1927,14 +1927,14 @@ ${tableRowsHtml}
 
                 <div className="h-4 w-px bg-white/10"></div>
 
-                {/* RESET BUTTON */}
+                {/* EDIT BALANCE BUTTON */}
                 <button 
-                  onClick={() => handleControl('reset')}
+                  onClick={() => { setCustomBalance(state.balance.toFixed(2)); setIsEditingBalance(true); }}
                   className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 rounded-lg transition-all cursor-pointer active:scale-95"
-                  title="I-reset ang buong simulator"
-                  id="reset-btn-bottom"
+                  title="Baguhin ang Account Balance"
+                  id="edit-balance-btn-bottom"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <Pencil className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
