@@ -1,8 +1,46 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if true;
+    // Global safety net (Default-deny catch-all)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable, hardened global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(email) {
+      return isSignedIn() && request.auth.token.email.lower() == email.lower();
+    }
+
+    // Entity validation helper to prevent shadow fields, type poisoning, and value poisoning
+    function isValidUser(data, email) {
+      return data.keys().hasAll(['email', 'role', 'createdAt', 'balance'])
+          && data.keys().size() == 4
+          && data.email is string 
+          && data.email.lower() == email.lower()
+          && data.role is string 
+          && (data.role == 'user' || data.role == 'admin')
+          && data.createdAt is string
+          && data.balance is number;
+    }
+
+    // Secured users collection rules (Zero-Trust Model)
+    match /users/{email} {
+      allow read: if isOwner(email);
+      allow create: if isOwner(email) 
+                   && isValidUser(request.resource.data, email)
+                   // Forbid Self-Assigned Roles (prevent identity/role escalation)
+                   && (request.resource.data.role == 'user' || email.lower() == 'achavezsalva@gmail.com');
+      allow update: if isOwner(email)
+                   && isValidUser(request.resource.data, email)
+                   // IMMORTAL FIELD: Guard against privilege escalation (role cannot be changed)
+                   && request.resource.data.role == resource.data.role
+                   // IMMORTAL FIELD: Guard against backdating (createdAt cannot be changed)
+                   && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false; // Prevent database sabotage (Deletions are forbidden)
     }
   }
 }

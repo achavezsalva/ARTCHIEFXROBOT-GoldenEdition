@@ -4,10 +4,10 @@
       "fields": {
         "email": "string",
         "role": "string",
-        "createdAt": "timestamp",
+        "createdAt": "string",
         "balance": "number"
       }
     }
   },
-  "rules": "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/{userId} {\n      allow read, write: if true;\n    }\n  }\n}"
+  "rules": "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if false;\n    }\n    function isSignedIn() {\n      return request.auth != null;\n    }\n    function isOwner(email) {\n      return isSignedIn() && request.auth.token.email.lower() == email.lower();\n    }\n    function isValidUser(data, email) {\n      return data.keys().hasAll(['email', 'role', 'createdAt', 'balance'])\n          && data.keys().size() == 4\n          && data.email is string \n          && data.email.lower() == email.lower()\n          && data.role is string \n          && (data.role == 'user' || data.role == 'admin')\n          && data.createdAt is string\n          && data.balance is number;\n    }\n    match /users/{email} {\n      allow read: if isOwner(email);\n      allow create: if isOwner(email) \n                   && isValidUser(request.resource.data, email)\n                   && (request.resource.data.role == 'user' || email.lower() == 'achavezsalva@gmail.com');\n      allow update: if isOwner(email)\n                   && isValidUser(request.resource.data, email)\n                   && request.resource.data.role == resource.data.role\n                   && request.resource.data.createdAt == resource.data.createdAt;\n      allow delete: if false;\n    }\n  }\n}"
 }
