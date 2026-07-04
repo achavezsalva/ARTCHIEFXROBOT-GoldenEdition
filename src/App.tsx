@@ -2607,6 +2607,24 @@ ${tableRowsHtml}
 
       </main>
 
+      {/* FOOTER SECTION WITH COPYRIGHT */}
+      <footer className="w-full py-8 border-t border-white/5 bg-[#090D16] text-center text-slate-500 font-sans text-xs tracking-wide mt-12">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <img 
+              src="/img/Artchie_FXROBOTlogo.png" 
+              alt="Artchie FX Robot" 
+              className="w-5 h-5 rounded object-cover opacity-50"
+              referrerPolicy="no-referrer"
+            />
+            <span className="font-semibold text-slate-400">ARTCHIE<span className="text-amber-500">FX</span> ROBOT v3.0</span>
+          </div>
+          <p className="text-[11px] text-slate-500 font-mono">
+            © 2026 Artchie Trading Simulator. All Rights Reserved. Designed for high-performance Forex EA simulation.
+          </p>
+        </div>
+      </footer>
+
 
 
       {/* PARAMETERS CONFIGURATION DIALOG / MODAL */}
