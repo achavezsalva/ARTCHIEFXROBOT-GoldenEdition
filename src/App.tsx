@@ -1929,14 +1929,15 @@ ${tableRowsHtml}
 
                 <div className="h-4 w-px bg-white/10"></div>
 
-                {/* EDIT BALANCE BUTTON */}
+                {/* RESET SIMULATOR BUTTON */}
                 <button 
-                  onClick={() => { setCustomBalance(state.balance.toFixed(2)); setIsEditingBalance(true); }}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 rounded-lg transition-all cursor-pointer active:scale-95"
-                  title="Baguhin ang Account Balance"
-                  id="edit-balance-btn-bottom"
+                  onClick={() => handleControl('reset')}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-500 hover:text-amber-400 border border-white/10 rounded-lg transition-all cursor-pointer active:scale-95 text-xs font-bold font-mono tracking-wider"
+                  title="I-reset ang buong simulation"
+                  id="reset-simulation-btn"
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <RotateCcw className="h-3.5 w-3.5 stroke-[2.5]" />
+                  <span>RESET</span>
                 </button>
               </div>
             </div>
